@@ -1,6 +1,6 @@
 # 电商工作平台
 
-> GitHub 仓库：`jinfenghua1990/ecommerce-workspace`
+> GitHub 仓库：`jinfenghua1990/zhejiang`
 
 这是一个面向实际经营的电商工作平台，不是单纯的数据看板。当前系统同时承载 **内销、外贸、供应链、库存、物流、财务与月结**，并通过统一业务数据与财务事项底座把各模块串起来。
 
@@ -202,37 +202,33 @@ PostgreSQL 与 Redis 不对公网开放。
 
 ## 分支与开发流程
 
-当前开发主线（**直提模式**：改完直接提交推送，不再新建 `codex/*` 分支、不再开 PR）：
+当前更新主线（**直提模式**：改完直接提交推送，不再让运行实例跟踪旧仓库或旧分支）：
 
 ```text
 本地直接修改
         ↓
-develop 直提 / 直接推送
+main 直提 / 直接推送
         ↓
        CI（push 触发）
         ↓
 Mac 本地拉取 / 验收
 ```
 
-> 2026-09-22 起恢复直提：日常开发直接写 `develop`。仓库内遗留的历史功能分支
-> 内容均已合入 `develop`，只保留极少数备份；新改动一律直提、一次提交一次推送。
+当前运行实例和系统更新中心统一跟踪 `main`；新改动一律一次提交、一次推送。
 
-`main` 作为正式发布主线；当前日常开发不要直接把 `develop` 无条件合并到 `main`，
-上线前按发布流程走完整验收。
-
-GitHub 仓库重命名后的远程地址：
+GitHub 仓库远程地址：
 
 ```bash
-git@github.com:jinfenghua1990/ecommerce-workspace.git
+git@github.com:jinfenghua1990/zhejiang.git
 ```
 
 本地更新远程地址：
 
 ```bash
-git remote set-url origin git@github.com:jinfenghua1990/ecommerce-workspace.git
+git remote set-url origin git@github.com:jinfenghua1990/zhejiang.git
 git fetch origin
-git switch develop
-git pull origin develop
+git switch main
+git pull origin main
 ```
 
 ## Mac 本地运行
@@ -325,7 +321,7 @@ Mac 当前使用：
 
 ```text
 DEPLOYMENT_MODE=native
-SYSTEM_UPDATE_BRANCH=develop
+SYSTEM_UPDATE_BRANCH=main
 ```
 
 系统更新会检查：
@@ -357,4 +353,4 @@ SYSTEM_UPDATE_BRANCH=develop
 
 GitHub 仓库统一使用：
 
-**`ecommerce-workspace`**
+**`zhejiang`**

@@ -4,7 +4,7 @@
 
 ## 运行原则
 
-- 代码主线：`develop`
+- 代码主线：`main`
 - 部署方式：`native`
 - 默认端口：`8000`
 - PostgreSQL / Redis：Mac 本机服务
@@ -25,7 +25,7 @@
 APP_ENV=development
 RELEASE_CHANNEL=local
 DEPLOYMENT_MODE=native
-SYSTEM_UPDATE_BRANCH=develop
+SYSTEM_UPDATE_BRANCH=main
 ```
 
 如果 Mac 当前承担正式业务数据，也可以在真实 `.env` 中继续使用：
@@ -49,16 +49,14 @@ make persistence-migrate
 ## Codex 开发流程
 
 ```text
-codex/*
-  ↓ PR
-develop
+main
   ↓ CI
 Mac 本地拉取 / 更新
   ↓
 本地业务验收
 ```
 
-在 NAS 部署恢复之前，`main` 和 PR #44 继续作为未来正式容器发布门禁，不因为本地开发而提前合并。
+当前 Mac 更新中心直接跟踪 `main`；NAS 容器发布仍按独立发布门禁执行。
 
 ## 安全
 

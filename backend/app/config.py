@@ -63,7 +63,7 @@ class Settings(BaseSettings):
     # 系统自更新：代码来源固定在受控 Git remote/branch，UI 只允许调整检查/安装模式。
     SYSTEM_UPDATE_ENABLED: bool = True
     SYSTEM_UPDATE_REMOTE: str = "origin"
-    SYSTEM_UPDATE_BRANCH: str = "develop"
+    SYSTEM_UPDATE_BRANCH: str = "main"
     SYSTEM_UPDATE_REPO_ROOT: str = ""
     SYSTEM_UPDATE_HEALTH_URL: str = "http://127.0.0.1:8000/healthz"
     SYSTEM_UPDATE_LAUNCH_LABEL: str = "com.gino.ecommerce-dashboard"

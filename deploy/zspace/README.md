@@ -74,7 +74,7 @@ docker compose up -d api worker beat
 在准备正式发布前，最好将 APP_IMAGE 从 candidate 改为本次候选的不可变 SHA 标签：
 
 ```text
-ghcr.io/jinfenghua1990/ecommerce-workspace:sha-<commit>
+ghcr.io/jinfenghua1990/zhejiang:sha-<commit>
 ```
 
 这样最终验收对象不会随着下一次 develop 推送变化。
@@ -86,14 +86,14 @@ main 只接受 develop 或 hotfix/* 的 PR。
 develop -> main 合并后，GitHub Actions 不会重建镜像，而是把已经测试过的 sha 镜像原样晋级，并生成：
 
 ```text
-ghcr.io/jinfenghua1990/ecommerce-workspace:vYYYY.MM.DD.HHmmss
-ghcr.io/jinfenghua1990/ecommerce-workspace:stable
+ghcr.io/jinfenghua1990/zhejiang:vYYYY.MM.DD.HHmmss
+ghcr.io/jinfenghua1990/zhejiang:stable
 ```
 
 正式环境建议将 APP_IMAGE 固定到具体版本：
 
 ```text
-APP_IMAGE=ghcr.io/jinfenghua1990/ecommerce-workspace:v2026.09.19.153000
+APP_IMAGE=ghcr.io/jinfenghua1990/zhejiang:v2026.09.19.153000
 ```
 
 不要长期只写 stable。stable 用于发现最新正式版，具体版本标签用于可追踪、可回滚部署。

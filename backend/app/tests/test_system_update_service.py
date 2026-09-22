@@ -11,7 +11,10 @@ from app.services import system_update_service as service
 def test_legacy_repository_remote_detection():
     assert service._is_legacy_repo_remote("git@github.com:jinfenghua1990/ecommerce-dashboard.git") is True
     assert service._is_legacy_repo_remote("https://github.com/jinfenghua1990/ecommerce-dashboard") is True
-    assert service._is_legacy_repo_remote("https://github.com/jinfenghua1990/ecommerce-workspace.git") is False
+    assert service._is_legacy_repo_remote("git@github.com:jinfenghua1990/Commerce-OS.git") is True
+    assert service._is_legacy_repo_remote("https://github.com/jinfenghua1990/ecommerce-workspace.git") is True
+    assert service._is_legacy_repo_remote("git@github.com:jinfenghua1990/zhejiang.git") is False
+    assert service._is_legacy_repo_remote("/tmp/test-remote.git") is False
 
 
 def test_update_settings_validation_and_cross_midnight_window():
@@ -142,7 +145,7 @@ def test_check_for_updates_rejects_legacy_repository_remote(monkeypatch, tmp_pat
 
     result = service.check_for_updates(actor="pytest")
     assert result["updateAvailable"] is False
-    assert "旧仓库 ecommerce-dashboard" in result["lastCheckError"]
+    assert "受控仓库 zhejiang" in result["lastCheckError"]
 
 
 def test_manual_check_still_works_when_background_service_disabled(monkeypatch, tmp_path: Path):

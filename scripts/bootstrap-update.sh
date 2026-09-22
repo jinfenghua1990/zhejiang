@@ -3,7 +3,7 @@ set -euo pipefail
 
 ROOT="${1:-/Users/gino/ecommerce-workspace}"
 REMOTE="${SYSTEM_UPDATE_REMOTE:-origin}"
-BRANCH="${SYSTEM_UPDATE_BRANCH:-develop}"
+BRANCH="${SYSTEM_UPDATE_BRANCH:-main}"
 LABEL_NAME="${SYSTEM_UPDATE_LAUNCH_LABEL:-com.gino.ecommerce-dashboard}"
 LABEL="gui/$(id -u)/$LABEL_NAME"
 VENV="$ROOT/backend/.venv"
@@ -51,7 +51,7 @@ launchctl kill SIGTERM "$LABEL" >/dev/null 2>&1 || true
 sleep 2
 bash "$ROOT/scripts/quiesce-update-workers.sh" >/dev/null 2>&1 || true
 
-log "读取远端最新 develop"
+log "读取远端最新 main"
 ECOMMERCE_ALLOW_MANUAL_GIT=1 git fetch --quiet "$REMOTE" "$BRANCH"
 TARGET_SHA="$(git rev-parse FETCH_HEAD)"
 log "目标版本：$TARGET_SHA"

@@ -30,6 +30,7 @@ _AUTO_INSTALL_LEVELS = {"patch", "feature", "major"}
 _LEVEL_RANK = {"patch": 1, "feature": 2, "major": 3}
 _ACTIVE_PHASES = {"queued", "preflight", "backup", "quiescing", "installing", "migrating", "building", "restarting", "healthcheck", "rollback"}
 _LOCK = threading.RLock()
+_TARGET_REPOSITORY = "jinfenghua1990/zhejiang"
 
 
 def _now_iso() -> str:
@@ -176,8 +177,19 @@ def _remote_repository_name(remote_url: str) -> str:
 
 
 def _is_legacy_repo_remote(remote_url: str) -> bool:
-    """The old ecommerce-dashboard repository must never be used as the update source."""
-    return _remote_repository_name(remote_url) == "ecommerce-dashboard"
+    """Only the new zhejiang repository may be used as the runtime update source."""
+    value = (remote_url or "").strip().rstrip("/")
+    # Local bare remotes are used by isolated service tests; they are not a
+    # production GitHub source and remain valid for those tests.
+    if "://" not in value and not value.startswith("git@"):
+        return False
+    if value.startswith("git@"):
+        repository = value.split(":", 1)[-1]
+    else:
+        repository = urlsplit(value).path.lstrip("/")
+    if repository.endswith(".git"):
+        repository = repository[:-4]
+    return repository.lower() != _TARGET_REPOSITORY
 
 
 def _state_dir() -> Path:
@@ -734,7 +746,7 @@ def upload_local_changes(*, actor: str = "system") -> dict[str, Any]:
         _raise_git_result(remote_probe, "无法读取 Git 远端")
         remote_url = remote_probe.stdout.strip()
         if _is_legacy_repo_remote(remote_url):
-            raise ValueError("当前远端仍是旧 ecommerce-dashboard，禁止上传本地修改")
+            raise ValueError("当前远端不是受控仓库 zhejiang，禁止上传本地修改")
 
         base_sha = str(payload["baseSha"])
         branch = _next_local_handoff_branch(remote)
@@ -814,7 +826,7 @@ def _git_ancestry_relation(current_sha: str, remote_sha: str) -> str:
 
 
 def sync_local_changes(*, actor: str = "system") -> dict[str, Any]:
-    """Commit allowed local code changes to develop and push with fast-forward safety."""
+    """Commit allowed local code changes to the configured branch safely."""
     if settings.DEPLOYMENT_MODE == "container":
         raise ValueError("容器模式不支持从运行实例同步本地代码")
 
@@ -837,7 +849,7 @@ def sync_local_changes(*, actor: str = "system") -> dict[str, Any]:
         _raise_git_result(remote_probe, "无法读取 Git 远端")
         remote_url = remote_probe.stdout.strip()
         if _is_legacy_repo_remote(remote_url):
-            raise ValueError("当前远端仍是旧 ecommerce-dashboard，禁止同步本地修改")
+            raise ValueError("当前远端不是受控仓库 zhejiang，禁止同步本地修改")
 
         payload = local_changes_payload(include_diff=False)
         eligible_paths = [str(item["path"]) for item in payload["files"]]
@@ -851,9 +863,9 @@ def sync_local_changes(*, actor: str = "system") -> dict[str, Any]:
             raise RuntimeError("远端返回的 commit 无效")
         relation = _git_ancestry_relation(base_sha, remote_sha)
         if relation == "remote_ahead":
-            raise ValueError("云端 develop 已有新提交，请先执行“从云端同步到本地”，再上传本地修改")
+            raise ValueError(f"云端 {branch} 已有新提交，请先执行“从云端同步到本地”，再上传本地修改")
         if relation == "diverged":
-            raise ValueError("本地与云端 develop 已分叉，禁止覆盖；请先人工合并后再同步")
+            raise ValueError(f"本地与云端 {branch} 已分叉，禁止覆盖；请先人工合并后再同步")
         if not eligible_paths and relation == "same":
             if payload["dirty"]:
                 raise ValueError("检测到的修改全部属于受保护文件，未同步任何业务数据")
@@ -867,7 +879,7 @@ def sync_local_changes(*, actor: str = "system") -> dict[str, Any]:
         try:
             if eligible_paths:
                 message = (
-                    "sync: 同步本地修改到 develop "
+                    f"sync: 同步本地修改到 {branch} "
                     + datetime.now(ZoneInfo(settings.TZ)).strftime("%Y-%m-%d %H:%M")
                     + f"\n\nSynced by system update center · actor={actor}"
                 )
@@ -881,7 +893,7 @@ def sync_local_changes(*, actor: str = "system") -> dict[str, Any]:
                     ["git", "update-ref", f"refs/heads/{branch}", commit_sha, base_sha],
                     timeout=20,
                 )
-                _raise_git_result(ref_result, "无法更新本地 develop 分支")
+                _raise_git_result(ref_result, f"无法更新本地 {branch} 分支")
                 branch_updated = True
 
             pushed_sha = commit_sha or base_sha
@@ -889,7 +901,7 @@ def sync_local_changes(*, actor: str = "system") -> dict[str, Any]:
                 ["git", "push", remote, f"refs/heads/{branch}:refs/heads/{branch}"],
                 timeout=180,
             )
-            _raise_git_result(push_result, "无法把本地 develop 同步到 GitHub")
+            _raise_git_result(push_result, f"无法把本地 {branch} 同步到 GitHub")
             push_completed = True
 
             if eligible_paths:
@@ -1378,8 +1390,8 @@ def check_for_updates(*, actor: str = "system", automatic: bool = False) -> dict
             remote_url = remote_probe.stdout.strip()
             if _is_legacy_repo_remote(remote_url):
                 raise RuntimeError(
-                    "当前运行服务仍指向旧仓库 ecommerce-dashboard；"
-                    "请把 LaunchAgent / SYSTEM_UPDATE_REPO_ROOT 切换到 ecommerce-workspace 后再检查更新"
+                    "当前运行服务未指向受控仓库 zhejiang；"
+                    "请把 origin 切换到 jinfenghua1990/zhejiang 后再检查更新"
                 )
             _git("fetch", "--quiet", remote, branch, timeout=120)
             latest_sha = _git("rev-parse", "FETCH_HEAD")
@@ -1606,8 +1618,8 @@ def update_readiness() -> dict[str, Any]:
                 "Git 远端",
                 "error" if legacy_remote else "ok",
                 (
-                    "当前运行服务仍指向旧仓库 ecommerce-dashboard；"
-                    "请把 LaunchAgent / SYSTEM_UPDATE_REPO_ROOT 切换到 ecommerce-workspace 后再更新"
+                    "当前运行服务未指向受控仓库 zhejiang；"
+                    "请把 origin 切换到 jinfenghua1990/zhejiang 后再更新"
                     if legacy_remote
                     else f"{cfg['remote']} · {remote_url}"
                 ),

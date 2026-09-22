@@ -22,7 +22,7 @@ def test_runtime_release_info_for_container(monkeypatch):
     monkeypatch.setattr(
         system_api.settings,
         "APP_IMAGE_REF",
-        "ghcr.io/jinfenghua1990/ecommerce-dashboard:sha-1234567890abcdef",
+        "ghcr.io/jinfenghua1990/zhejiang:sha-1234567890abcdef",
     )
     monkeypatch.setattr(system_api.settings, "SYSTEM_UPDATE_ENABLED", False)
 
@@ -45,7 +45,7 @@ def test_container_readiness_reports_runtime_identity(monkeypatch):
     monkeypatch.setattr(
         system_api.settings,
         "APP_IMAGE_REF",
-        "ghcr.io/jinfenghua1990/ecommerce-dashboard:candidate",
+        "ghcr.io/jinfenghua1990/zhejiang:candidate",
     )
 
     result = system_api.system_update_readiness(_FakeDb())
