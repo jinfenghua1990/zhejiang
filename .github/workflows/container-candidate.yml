@@ -1,0 +1,73 @@
+name: Container Candidate
+
+on:
+  # develop changes are frequent; build a candidate explicitly when it is
+  # actually needed for staging/release. Hotfix branches remain automatic.
+  push:
+    branches:
+      - "hotfix/**"
+  workflow_dispatch:
+
+concurrency:
+  group: container-candidate-${{ github.ref }}
+  cancel-in-progress: true
+
+permissions:
+  contents: read
+  packages: write
+
+jobs:
+  build-image:
+    name: Build immutable app image
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v7
+
+      - uses: docker/setup-buildx-action@v3
+
+      - name: Log in to GitHub Container Registry
+        uses: docker/login-action@v3
+        with:
+          registry: ghcr.io
+          username: ${{ github.actor }}
+          password: ${{ secrets.GITHUB_TOKEN }}
+
+      - name: Resolve image name
+        id: meta
+        shell: bash
+        run: |
+          echo "image=ghcr.io/${GITHUB_REPOSITORY,,}" >> "$GITHUB_OUTPUT"
+          echo "sha_tag=sha-${GITHUB_SHA}" >> "$GITHUB_OUTPUT"
+
+      - name: Build and push immutable candidate
+        uses: docker/build-push-action@v6
+        with:
+          context: .
+          file: ./Dockerfile
+          platforms: linux/amd64
+          push: true
+          build-args: |
+            GIT_SHA=${{ github.sha }}
+          tags: ${{ steps.meta.outputs.image }}:${{ steps.meta.outputs.sha_tag }}
+          labels: |
+            org.opencontainers.image.revision=${{ github.sha }}
+            org.opencontainers.image.source=https://github.com/${{ github.repository }}
+
+      - name: Point candidate tag at develop image
+        if: github.ref == 'refs/heads/develop'
+        shell: bash
+        run: |
+          docker buildx imagetools create             --tag "${{ steps.meta.outputs.image }}:candidate"             "${{ steps.meta.outputs.image }}:${{ steps.meta.outputs.sha_tag }}"
+
+      - name: Summary
+        shell: bash
+        run: |
+          {
+            echo "### Candidate image"
+            echo
+            echo "\`${{ steps.meta.outputs.image }}:${{ steps.meta.outputs.sha_tag }}\`"
+            if [ "${GITHUB_REF}" = "refs/heads/develop" ]; then
+              echo
+              echo "The mutable \`candidate\` tag now points at this immutable SHA image."
+            fi
+          } >> "$GITHUB_STEP_SUMMARY"

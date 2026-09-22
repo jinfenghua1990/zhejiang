@@ -1,0 +1,126 @@
+name: ecommerce-dashboard
+
+services:
+  postgres:
+    image: postgres:17.11-alpine
+    restart: unless-stopped
+    environment:
+      POSTGRES_DB: ${POSTGRES_DB:-ecommerce}
+      POSTGRES_USER: ${POSTGRES_USER:-ecommerce}
+      POSTGRES_PASSWORD: ${POSTGRES_PASSWORD:?set POSTGRES_PASSWORD}
+    ports:
+      - "127.0.0.1:25432:5432"
+    volumes:
+      - pgdata:/var/lib/postgresql/data
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U $${POSTGRES_USER} -d $${POSTGRES_DB}"]
+      interval: 5s
+      timeout: 3s
+      retries: 20
+
+  redis:
+    image: redis:7.4-alpine
+    restart: unless-stopped
+    command: ["redis-server", "--appendonly", "yes"]
+    ports:
+      - "127.0.0.1:26379:6379"
+    volumes:
+      - redisdata:/data
+    healthcheck:
+      test: ["CMD", "redis-cli", "ping"]
+      interval: 5s
+      timeout: 3s
+      retries: 20
+
+
+  migrate:
+    build:
+      context: .
+      dockerfile: Dockerfile
+    restart: "no"
+    env_file: .env
+    environment:
+      DATABASE_URL: postgresql+psycopg://${POSTGRES_USER:-ecommerce}:${POSTGRES_PASSWORD:?set POSTGRES_PASSWORD}@postgres:5432/${POSTGRES_DB:-ecommerce}
+      MIGRATION_DATABASE_URL: ${MIGRATION_DATABASE_URL:-}
+      REDIS_URL: redis://redis:6379/0
+      DATA_DIR: /data
+      HOME: /tmp
+    volumes:
+      - ${DATA_DIR_HOST:-./data}:/data
+    depends_on:
+      postgres:
+        condition: service_healthy
+    command: ["bash", "-lc", "if [ -n \"$$MIGRATION_DATABASE_URL\" ]; then export DATABASE_URL=\"$$MIGRATION_DATABASE_URL\"; fi; alembic upgrade head && python -m app.seed"]
+
+  api:
+    build:
+      context: .
+      dockerfile: Dockerfile
+    restart: unless-stopped
+    user: "${RUNTIME_UID:-1000}:${RUNTIME_GID:-1000}"
+    env_file: .env
+    environment:
+      DATABASE_URL: postgresql+psycopg://${POSTGRES_USER:-ecommerce}:${POSTGRES_PASSWORD:?set POSTGRES_PASSWORD}@postgres:5432/${POSTGRES_DB:-ecommerce}
+      MIGRATION_DATABASE_URL: ""
+      POSTGRES_PASSWORD: ""
+      REDIS_URL: redis://redis:6379/0
+      DATA_DIR: /data
+      FRONTEND_OUT: /app/frontend/out
+      HOME: /tmp
+    ports:
+      - "8000:8000"
+    volumes:
+      - ${DATA_DIR_HOST:-./data}:/data
+    depends_on:
+      migrate:
+        condition: service_completed_successfully
+      redis:
+        condition: service_healthy
+    healthcheck:
+      test: ["CMD", "curl", "-sf", "http://localhost:8000/healthz"]
+      interval: 10s
+      timeout: 5s
+      retries: 12
+
+  worker:
+    build: ./backend
+    restart: unless-stopped
+    user: "${RUNTIME_UID:-1000}:${RUNTIME_GID:-1000}"
+    command: ["celery", "-A", "app.celery_app", "worker", "-l", "info", "--concurrency", "2"]
+    env_file: .env
+    environment:
+      DATABASE_URL: postgresql+psycopg://${POSTGRES_USER:-ecommerce}:${POSTGRES_PASSWORD:?set POSTGRES_PASSWORD}@postgres:5432/${POSTGRES_DB:-ecommerce}
+      MIGRATION_DATABASE_URL: ""
+      POSTGRES_PASSWORD: ""
+      REDIS_URL: redis://redis:6379/0
+      DATA_DIR: /data
+      HOME: /tmp
+    volumes:
+      - ${DATA_DIR_HOST:-./data}:/data
+    depends_on:
+      migrate:
+        condition: service_completed_successfully
+      redis:
+        condition: service_healthy
+
+  beat:
+    build: ./backend
+    restart: unless-stopped
+    user: "${RUNTIME_UID:-1000}:${RUNTIME_GID:-1000}"
+    command: ["celery", "-A", "app.celery_app", "beat", "-l", "info", "--schedule", "/tmp/celerybeat-schedule"]
+    env_file: .env
+    environment:
+      DATABASE_URL: postgresql+psycopg://${POSTGRES_USER:-ecommerce}:${POSTGRES_PASSWORD:?set POSTGRES_PASSWORD}@postgres:5432/${POSTGRES_DB:-ecommerce}
+      MIGRATION_DATABASE_URL: ""
+      POSTGRES_PASSWORD: ""
+      REDIS_URL: redis://redis:6379/0
+      HOME: /tmp
+    depends_on:
+      migrate:
+        condition: service_completed_successfully
+      redis:
+        condition: service_healthy
+
+volumes:
+  pgdata:
+  redisdata:

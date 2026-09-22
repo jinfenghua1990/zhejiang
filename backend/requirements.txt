@@ -1,0 +1,22 @@
+# 生产依赖固定到 2026-09-07 CI 已验证组合。
+# 财务/月结系统要求可复算：升级依赖必须走独立分支 + 全量测试，不能因重新安装而静默漂移。
+fastapi==0.141.1
+uvicorn[standard]==0.52.4
+sqlalchemy==2.0.52
+alembic==1.19.2
+psycopg[binary]==3.3.5
+pydantic==2.13.5
+pydantic-settings==2.15.0
+celery==5.6.3
+redis==8.1.0
+httpx==0.28.1
+requests==2.34.2
+cryptography==50.0.1
+python-multipart==0.0.32
+openpyxl==3.1.5
+pytest==9.1.1
+pandas==3.0.5
+
+# 1688 浏览器直采：服务器端 Playwright 驱动真实 Chrome 抓订单（Mac mini 需保持 GUI 登录会话）。
+# channel=chrome 时驱动本机 Google Chrome，无需下载 chromium；否则执行 playwright install chromium。
+playwright==1.62.0

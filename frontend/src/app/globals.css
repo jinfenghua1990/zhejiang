@@ -1,0 +1,642 @@
+@import "tailwindcss";
+
+@custom-variant dark (&:where(.dark, .dark *));
+
+/* 浮层层高规范 —— 新增弹层一律用下面的语义类，禁止再写死 z-30 / z-50 / z-[70]。
+   sticky 表头/页头仍用 z-10 / z-20（局部层级，不参与弹层竞争）。 */
+@utility z-dropdown {
+  z-index: 400;
+}
+@utility z-modal {
+  z-index: 1000;
+}
+@utility z-modal-nested {
+  z-index: 1010;
+}
+@utility z-toast {
+  z-index: 1100;
+}
+
+:root {
+  color-scheme: light;
+  --app-bg: #f5f7fb;
+  --app-surface: #ffffff;
+  --app-surface-muted: #f8fafc;
+  --app-surface-soft: #eef2f7;
+  --app-surface-elevated: #ffffff;
+  --app-border: #e4e9f1;
+  --app-border-strong: #ccd5e2;
+  --app-text: #111827;
+  --app-text-strong: #344054;
+  --app-text-muted: #667085;
+  --app-text-soft: #98a2b3;
+  --app-accent: #2f6fed;
+  --app-accent-hover: #245fd1;
+  --app-accent-soft: #eef4ff;
+  --app-success-soft: #ecfdf3;
+  --app-warning-soft: #fffaeb;
+  --app-danger-soft: #fff1f3;
+  --app-topbar: rgb(255 255 255 / 94%);
+  --app-header: rgb(245 247 251 / 93%);
+  --app-header-border: rgb(228 233 241 / 76%);
+  --app-sidebar: #14263d;
+  --app-sidebar-muted: #9fb0c6;
+  --app-sidebar-active: #2f6fed;
+  --app-input: #ffffff;
+  --app-table-head: #f7f9fc;
+  --app-popover: #ffffff;
+  --app-shadow: 0 12px 32px rgb(16 24 40 / 9%);
+  --app-card-shadow: 0 1px 2px rgb(16 24 40 / 4%);
+  --app-focus: rgb(47 111 237 / 22%);
+}
+
+.dark {
+  color-scheme: dark;
+  --app-bg: #0b1018;
+  --app-surface: #111827;
+  --app-surface-muted: #172033;
+  --app-surface-soft: #1d2939;
+  --app-surface-elevated: #141c2b;
+  --app-border: #263244;
+  --app-border-strong: #34445a;
+  --app-text: #e8edf5;
+  --app-text-strong: #c7d2e0;
+  --app-text-muted: #aeb9c9;
+  --app-text-soft: #8d9cb0;
+  --app-accent: #6ea8fe;
+  --app-accent-hover: #8bb9ff;
+  --app-accent-soft: #15284a;
+  --app-success-soft: #0d2f25;
+  --app-warning-soft: #352a10;
+  --app-danger-soft: #3b1922;
+  --app-topbar: rgb(11 16 24 / 94%);
+  --app-header: rgb(11 16 24 / 92%);
+  --app-header-border: rgb(38 50 68 / 78%);
+  --app-sidebar: #0b1625;
+  --app-sidebar-muted: #9aabc0;
+  --app-sidebar-active: #2f6fed;
+  --app-input: #151f2f;
+  --app-table-head: #141e2e;
+  --app-popover: #111827;
+  --app-shadow: 0 16px 40px rgb(0 0 0 / 34%);
+  --app-card-shadow: 0 1px 2px rgb(0 0 0 / 24%);
+  --app-focus: rgb(110 168 254 / 26%);
+}
+
+html,
+body {
+  width: 100%;
+  min-width: 0;
+  min-height: 100%;
+  background: var(--app-bg);
+}
+
+html.dark,
+html.dark body {
+  background: var(--app-bg);
+}
+
+body {
+  margin: 0;
+  overflow-x: hidden;
+  color: var(--app-text);
+  -webkit-font-smoothing: antialiased;
+  text-rendering: optimizeLegibility;
+}
+
+* {
+  box-sizing: border-box;
+}
+
+/*
+ * V1.6.1 统一业务工作区：
+ * - 主区永远占满侧栏之外的浏览器剩余宽度；
+ * - 业务页顶层历史 max-width 不再限制大屏展示；
+ * - 宽表格只允许在自己的 overflow-x-auto 容器内滚动。
+ */
+[data-app-main] {
+  width: 0;
+  min-width: 0;
+}
+
+[data-app-scroll] {
+  overscroll-behavior: contain;
+  scrollbar-gutter: stable;
+}
+
+.app-route-content {
+  width: 100%;
+  min-width: 0;
+}
+
+.app-shell {
+  background: var(--app-bg);
+  color: var(--app-text);
+}
+
+.app-card {
+  background: var(--app-surface);
+  border: 1px solid var(--app-border);
+  color: var(--app-text);
+  box-shadow: var(--app-card-shadow);
+}
+.app-card-muted {
+  background: var(--app-surface-muted);
+  border: 1px solid var(--app-border);
+  color: var(--app-text);
+}
+.app-card-elevated {
+  background: var(--app-surface-elevated);
+  border: 1px solid var(--app-border);
+  color: var(--app-text);
+  box-shadow: var(--app-shadow);
+}
+.app-muted { color: var(--app-text-muted); }
+.app-soft { color: var(--app-text-soft); }
+.app-input-control {
+  background: var(--app-input);
+  border: 1px solid var(--app-border-strong);
+  color: var(--app-text);
+  transition: border-color 120ms ease, box-shadow 120ms ease, background-color 120ms ease;
+}
+.app-input-control:focus {
+  border-color: var(--app-accent);
+  box-shadow: 0 0 0 3px var(--app-focus);
+  outline: none;
+}
+.app-input-control::placeholder { color: var(--app-text-soft); }
+.app-button-primary {
+  background: var(--app-accent);
+  color: #fff;
+  transition: background-color 120ms ease, transform 120ms ease;
+}
+.app-button-primary:hover { background: var(--app-accent-hover); }
+.app-button-primary:active { transform: translateY(1px); }
+.app-button-secondary {
+  background: var(--app-surface);
+  border: 1px solid var(--app-border);
+  color: var(--app-text-strong);
+  transition: background-color 120ms ease, border-color 120ms ease;
+}
+.app-button-secondary:hover {
+  background: var(--app-surface-muted);
+  border-color: var(--app-border-strong);
+}
+.app-nav-active {
+  background: var(--app-accent-soft);
+  color: var(--app-accent);
+}
+.app-brand-mark {
+  background: var(--app-sidebar);
+  color: #fff;
+}
+.app-integration-status {
+  background: var(--app-surface-muted);
+  border: 1px solid var(--app-border);
+  color: var(--app-text-muted);
+}
+
+.app-topbar {
+  background: var(--app-topbar);
+  border-color: var(--app-border);
+  color: var(--app-text);
+  backdrop-filter: blur(12px);
+  -webkit-backdrop-filter: blur(12px);
+}
+
+.app-sidebar {
+  background: var(--app-sidebar);
+  color: #fff;
+}
+
+.app-sidebar-active {
+  background: var(--app-sidebar-active);
+}
+
+.app-popover {
+  background: var(--app-popover);
+  border-color: var(--app-border);
+  box-shadow: var(--app-shadow);
+}
+
+.app-theme-button {
+  background: var(--app-surface);
+  border-color: var(--app-border);
+}
+.app-theme-button:hover {
+  background: var(--app-surface-muted);
+  color: var(--app-text);
+}
+
+.app-page-header {
+  position: sticky;
+  top: 0;
+  z-index: 20;
+  isolation: isolate;
+  background: var(--app-header);
+  backdrop-filter: blur(10px);
+  -webkit-backdrop-filter: blur(10px);
+  box-shadow: inset 0 -1px 0 var(--app-header-border);
+}
+
+/*
+ * V1.6.4 工作区 Tabs
+ * - 主菜单是「业务模块导航」，Tabs 是「工作区导航」，两层分开且互不遮挡；
+ * - 打开过的 Tab 面板一直挂载，非激活的只做可见性隐藏：布局盒仍在，
+ *   所以筛选、搜索词、页码、滚动位置、展开态、勾选和未提交输入都会保留。
+ */
+[data-workspace-tabbar] {
+  isolation: isolate;
+}
+
+[data-workspace-panel][aria-hidden="true"] {
+  visibility: hidden;
+  pointer-events: none;
+}
+
+.products-catalog-table-head th {
+  position: sticky;
+  top: 3rem;
+  z-index: 20;
+  background: rgb(248 250 252 / 98%);
+  box-shadow: inset 0 -1px 0 #e2e8f0;
+}
+
+.app-route-content > * {
+  width: 100%;
+  max-width: none !important;
+  margin-left: 0 !important;
+  margin-right: 0 !important;
+}
+
+.app-route-content [class*="overflow-x-auto"] {
+  max-width: 100%;
+  overscroll-behavior-x: contain;
+}
+
+.app-route-content table {
+  max-width: none;
+}
+
+/*
+ * 全局可调列宽表格
+ * - 所有业务表格表头右侧可拖动改列宽；
+ * - 列宽由客户端记忆，刷新/切换工作区后保持；
+ * - 表格超出容器时在当前区域横向滚动，不再压缩全部字段；
+ * - 双击列分隔线恢复该列默认宽度。
+ */
+.global-table-scroll-host {
+  max-width: 100%;
+  overflow-x: auto !important;
+  overscroll-behavior-x: contain;
+  scrollbar-gutter: stable;
+}
+
+.global-resizable-table {
+  width: max-content !important;
+  min-width: 100% !important;
+  max-width: none !important;
+}
+
+.global-resizable-table thead th,
+.global-resizable-table tr > th {
+  position: relative;
+}
+
+.global-resizable-table .global-column-sized {
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+
+.global-column-resizer {
+  position: absolute;
+  top: 0;
+  right: -3px;
+  z-index: 30;
+  width: 7px;
+  height: 100%;
+  cursor: col-resize;
+  touch-action: none;
+  user-select: none;
+}
+
+.global-column-resizer::after {
+  content: "";
+  position: absolute;
+  top: 18%;
+  bottom: 18%;
+  left: 3px;
+  width: 1px;
+  background: transparent;
+  transition: background-color 120ms ease, width 120ms ease;
+}
+
+/* 顶部一级菜单在中等宽度屏幕允许横向滚动，避免导航把搜索和右侧工具挤出视口。 */
+.top-primary-nav {
+  scrollbar-width: none;
+  -ms-overflow-style: none;
+}
+.top-primary-nav::-webkit-scrollbar {
+  display: none;
+}
+
+.global-column-resizer:hover::after,
+.global-column-resizer.is-active::after {
+  width: 2px;
+  background: #6366f1;
+}
+
+html.global-column-resizing,
+html.global-column-resizing * {
+  cursor: col-resize !important;
+  user-select: none !important;
+}
+
+.dark .global-column-resizer:hover::after,
+.dark .global-column-resizer.is-active::after {
+  background: #818cf8;
+}
+
+::selection {
+  background: #dbeafe;
+  color: #17335f;
+}
+
+/* ===== 暗色模式覆盖层（全局类映射，.dark 作用域） ===== */
+.dark body {
+  background: var(--app-bg);
+  color: var(--app-text);
+}
+.dark ::selection {
+  background: #1e3a5f;
+  color: #dbeafe;
+}
+.dark .app-page-header {
+  background: var(--app-header);
+}
+.dark .products-catalog-table-head th {
+  background: var(--app-table-head);
+  box-shadow: inset 0 -1px 0 var(--app-border);
+}
+
+/* 面板与底色 —— 页面最深，卡片稍亮，次级更亮，拉开层次 */
+.dark .bg-white { background-color: var(--app-surface); }
+.dark .bg-slate-50 { background-color: var(--app-surface-muted); }
+.dark .bg-slate-100 { background-color: var(--app-surface-soft); }
+.dark .bg-slate-200 { background-color: #2e3d5c; }
+.dark .bg-\[\#f4f7fb\] { background-color: #0a0e1a; }
+.dark .bg-\[\#f4f7fb\]\/95 { background-color: rgb(10 14 26 / 95%); }
+
+/* 半透明白 */
+.dark .bg-white\/75 { background-color: rgb(20 29 48 / 75%); }
+.dark .bg-white\/60 { background-color: rgb(20 29 48 / 60%); }
+.dark .bg-white\/40 { background-color: rgb(20 29 48 / 40%); }
+
+/* 边框 —— 提亮，增强分隔感 */
+.dark .border-slate-100 { border-color: #2a3550; }
+.dark .border-slate-200 { border-color: var(--app-border); }
+.dark .border-slate-300 { border-color: var(--app-border-strong); }
+
+/* 分割线 */
+.dark .divide-slate-100 > :not(:last-child) { border-color: #3a4868; }
+.dark .divide-slate-200 > :not(:last-child) { border-color: #4a5a7a; }
+
+/* 文字 */
+.dark .text-slate-900 { color: var(--app-text); }
+.dark .text-slate-800 { color: var(--app-text); }
+.dark .text-slate-700 { color: var(--app-text-strong); }
+.dark .text-slate-600 { color: var(--app-text-muted); }
+.dark .text-slate-500 { color: #aeb9c9; }
+.dark .text-slate-400 { color: #8d9cb0; }
+.dark .text-slate-300 { color: #cbd5e1; }
+
+/* 状态彩色标签 —— 提亮底色，增强可读性 */
+.dark .bg-indigo-50 { background-color: #1e3a5f; }
+.dark .bg-blue-50 { background-color: #1e3a5f; }
+.dark .bg-amber-50 { background-color: #4a3815; }
+.dark .bg-rose-50 { background-color: #5c1f30; }
+.dark .bg-emerald-50 { background-color: #103d2e; }
+.dark .bg-violet-50 { background-color: #3a2463; }
+.dark .bg-sky-50 { background-color: #0e4a6e; }
+.dark .bg-orange-50 { background-color: #5a2a10; }
+.dark .bg-red-50 { background-color: #5c1f30; }
+.dark .bg-slate-50\/40 { background-color: rgb(26 37 64 / 40%); }
+.dark .bg-slate-50\/60 { background-color: rgb(26 37 64 / 60%); }
+.dark .bg-slate-50\/70 { background-color: rgb(26 37 64 / 70%); }
+.dark .bg-slate-50\/80 { background-color: rgb(26 37 64 / 80%); }
+.dark .bg-indigo-50\/40 { background-color: rgb(30 58 95 / 40%); }
+.dark .bg-indigo-50\/60 { background-color: rgb(30 58 95 / 60%); }
+.dark .bg-indigo-50\/70 { background-color: rgb(30 58 95 / 70%); }
+.dark .bg-indigo-50\/30 { background-color: rgb(30 58 95 / 30%); }
+.dark .bg-rose-50\/70 { background-color: rgb(92 31 48 / 70%); }
+.dark .bg-rose-50\/60 { background-color: rgb(92 31 48 / 60%); }
+.dark .bg-emerald-50\/60 { background-color: rgb(16 61 46 / 60%); }
+
+/* 常见半透明状态面板：避免暗色下仍残留近白背景 */
+.dark .bg-blue-50\/50 { background-color: rgb(30 58 95 / 50%); }
+.dark .bg-blue-50\/60 { background-color: rgb(30 58 95 / 60%); }
+.dark .bg-blue-50\/70 { background-color: rgb(30 58 95 / 70%); }
+.dark .bg-amber-50\/60 { background-color: rgb(74 56 21 / 60%); }
+.dark .bg-amber-50\/70 { background-color: rgb(74 56 21 / 70%); }
+.dark .bg-emerald-50\/50 { background-color: rgb(16 61 46 / 50%); }
+.dark .bg-emerald-50\/70 { background-color: rgb(16 61 46 / 70%); }
+.dark .bg-violet-50\/60 { background-color: rgb(58 36 99 / 60%); }
+.dark .bg-violet-50\/70 { background-color: rgb(58 36 99 / 70%); }
+.dark .bg-orange-50\/60 { background-color: rgb(90 42 16 / 60%); }
+.dark .bg-orange-50\/70 { background-color: rgb(90 42 16 / 70%); }
+.dark .bg-gray-50\/50 { background-color: rgb(26 37 64 / 50%); }
+.dark .bg-gray-50\/60 { background-color: rgb(26 37 64 / 60%); }
+
+/* 彩色标签边框 */
+.dark .border-indigo-100 { border-color: #3730a3; }
+.dark .border-indigo-200 { border-color: #4338ca; }
+.dark .border-blue-100 { border-color: #1e40af; }
+.dark .border-indigo-300 { border-color: #4f46e5; }
+.dark .border-blue-200 { border-color: #1d4ed8; }
+.dark .border-blue-300 { border-color: #2563eb; }
+.dark .border-amber-100 { border-color: #92400e; }
+.dark .border-amber-200 { border-color: #b45309; }
+.dark .border-amber-300 { border-color: #d97706; }
+.dark .border-rose-100 { border-color: #9f1239; }
+.dark .border-rose-200 { border-color: #be123c; }
+.dark .border-rose-300 { border-color: #e11d48; }
+.dark .border-emerald-100 { border-color: #065f46; }
+.dark .border-emerald-200 { border-color: #047857; }
+.dark .border-violet-100 { border-color: #5b21b6; }
+.dark .border-violet-200 { border-color: #6d28d9; }
+.dark .border-sky-100 { border-color: #0369a1; }
+.dark .border-sky-200 { border-color: #0284c7; }
+.dark .border-orange-100 { border-color: #9a3412; }
+.dark .border-orange-200 { border-color: #c2410c; }
+.dark .border-slate-200 { border-color: var(--app-border); }
+.dark .border-slate-300 { border-color: var(--app-border-strong); }
+
+/* 彩色文字 */
+.dark .text-indigo-950 { color: #e0e7ff; }
+.dark .text-indigo-900 { color: #c7d2fe; }
+.dark .text-indigo-800 { color: #b9c4fd; }
+.dark .text-indigo-700 { color: #a5b4fc; }
+.dark .text-indigo-600 { color: #a5b4fc; }
+.dark .text-indigo-500 { color: #818cf8; }
+.dark .text-blue-700 { color: #93c5fd; }
+.dark .text-blue-600 { color: #93c5fd; }
+.dark .text-amber-800 { color: #fde68a; }
+.dark .text-amber-700 { color: #fcd34d; }
+.dark .text-amber-600 { color: #fbbf24; }
+.dark .text-rose-700 { color: #fda4af; }
+.dark .text-rose-600 { color: #fb7185; }
+.dark .text-rose-500 { color: #fb7185; }
+.dark .text-emerald-700 { color: #6ee7b7; }
+.dark .text-emerald-600 { color: #6ee7b7; }
+.dark .text-violet-700 { color: #c4b5fd; }
+.dark .text-sky-700 { color: #7dd3fc; }
+.dark .text-orange-700 { color: #fdba74; }
+.dark .text-red-700 { color: #fca5a5; }
+.dark .text-red-600 { color: #f87171; }
+.dark .text-red-500 { color: #fb7185; }
+.dark .text-amber-500 { color: #fbbf24; }
+.dark .text-orange-600 { color: #fdba74; }
+.dark .text-sky-600 { color: #7dd3fc; }
+.dark .text-sky-500 { color: #38bdf8; }
+.dark .text-blue-500 { color: #60a5fa; }
+.dark .text-emerald-500 { color: #34d399; }
+.dark .text-violet-600 { color: #c4b5fd; }
+.dark .text-slate-200 { color: #e2e8f0; }
+
+/* ring-inset 状态标签也使用暗色边框色 */
+.dark .ring-amber-200 { --tw-ring-color: #b45309; }
+.dark .ring-sky-200 { --tw-ring-color: #0284c7; }
+.dark .ring-emerald-200 { --tw-ring-color: #047857; }
+.dark .ring-red-200 { --tw-ring-color: #be123c; }
+.dark .ring-indigo-200 { --tw-ring-color: #4338ca; }
+
+/* 表格行分隔与斑马纹 —— 增强暗色下的行区分度 */
+.dark tbody tr {
+  border-bottom: 1px solid #2a3550;
+}
+.dark tbody tr:nth-child(even) {
+  background-color: rgb(20 29 48 / 60%);
+}
+.dark tbody tr:hover {
+  background-color: #223048 !important;
+}
+
+/* hover / 焦点态 —— 更明显的反馈 */
+.dark .hover\:bg-slate-50:hover { background-color: #223048; }
+.dark .hover\:bg-slate-100:hover { background-color: #2a3a58; }
+.dark .hover\:bg-white:hover { background-color: #1a2540; }
+.dark .hover\:bg-indigo-50:hover { background-color: #2a4a7a; }
+.dark .hover\:bg-blue-50:hover { background-color: #2a4a7a; }
+.dark .hover\:bg-amber-50:hover { background-color: #5a4520; }
+.dark .hover\:bg-rose-50:hover { background-color: #6e2840; }
+.dark .hover\:bg-emerald-50:hover { background-color: #15503a; }
+.dark .focus-within\:bg-white:focus-within { background-color: #141d30; }
+
+/* 表格行 hover 反馈 */
+.dark .hover\:bg-slate-50\/70:hover { background-color: #223048; }
+
+/* 输入框/下拉框 —— 暗色下更突出 */
+.dark input,
+.dark select,
+.dark textarea {
+  background-color: var(--app-input);
+  border-color: var(--app-border);
+  color: var(--app-text);
+}
+.dark input::placeholder,
+.dark textarea::placeholder {
+  color: #64748b;
+}
+
+/* ===== 暗色模式补全：历史页面仍大量使用 gray-* / ring-* / 半透明白 =====
+ * 统一在全局做语义映射，避免每个旧页面逐个补 dark:class 后再次漂移。
+ */
+.dark .bg-gray-50 { background-color: #1a2540; }
+.dark .bg-gray-100 { background-color: #223048; }
+.dark .bg-gray-200 { background-color: #2e3d5c; }
+.dark .bg-gray-300 { background-color: #3a4868; }
+.dark .bg-white\/95 { background-color: rgb(20 29 48 / 95%); }
+.dark .bg-white\/90 { background-color: rgb(20 29 48 / 90%); }
+.dark .bg-white\/80 { background-color: rgb(20 29 48 / 80%); }
+.dark .bg-white\/70 { background-color: rgb(20 29 48 / 70%); }
+.dark .bg-white\/50 { background-color: rgb(20 29 48 / 50%); }
+
+.dark .border-gray-100 { border-color: #2a3550; }
+.dark .border-gray-200 { border-color: #334155; }
+.dark .border-gray-300 { border-color: #3f4e6b; }
+.dark .border-gray-400 { border-color: #52617e; }
+
+.dark .divide-gray-100 > :not(:last-child) { border-color: #2a3550; }
+.dark .divide-gray-200 > :not(:last-child) { border-color: #3a4868; }
+
+.dark .text-gray-900 { color: #f1f5f9; }
+.dark .text-gray-800 { color: #e2e8f0; }
+.dark .text-gray-700 { color: #cbd5e1; }
+.dark .text-gray-600 { color: #a8b4c6; }
+.dark .text-gray-500 { color: #aeb9c9; }
+.dark .text-gray-400 { color: #8d9cb0; }
+.dark .text-gray-300 { color: #94a3b8; }
+
+.dark .ring-gray-100 { --tw-ring-color: #2a3550; }
+.dark .ring-gray-200 { --tw-ring-color: #334155; }
+.dark .ring-gray-300 { --tw-ring-color: #3f4e6b; }
+.dark .ring-slate-100 { --tw-ring-color: #2a3550; }
+.dark .ring-slate-200 { --tw-ring-color: #334155; }
+.dark .ring-slate-300 { --tw-ring-color: #3f4e6b; }
+
+.dark .hover\:bg-gray-50:hover { background-color: #223048; }
+.dark .hover\:bg-gray-100:hover { background-color: #2a3a58; }
+.dark .hover\:bg-gray-200:hover { background-color: #33435f; }
+.dark .hover\:text-gray-900:hover { color: #f8fafc; }
+.dark .hover\:text-slate-900:hover { color: #f8fafc; }
+
+/* 表头、弹层、按钮和原生控件在暗色下统一层级 */
+.dark thead.bg-gray-50,
+.dark thead .bg-gray-50,
+.dark thead.bg-slate-50,
+.dark thead .bg-slate-50 {
+  background-color: #18233b;
+}
+.dark [role="dialog"],
+.dark [role="menu"],
+.dark [data-radix-popper-content-wrapper] {
+  color: #e2e8f0;
+}
+.dark option {
+  background: #1a2540;
+  color: #e2e8f0;
+}
+.dark input[type="date"]::-webkit-calendar-picker-indicator,
+.dark input[type="datetime-local"]::-webkit-calendar-picker-indicator,
+.dark input[type="month"]::-webkit-calendar-picker-indicator {
+  filter: invert(0.82);
+}
+.dark input[type="checkbox"],
+.dark input[type="radio"] {
+  accent-color: #818cf8;
+}
+
+/* 阴影在暗色下避免出现发白边缘 */
+.dark .shadow,
+.dark .shadow-sm,
+.dark .shadow-md,
+.dark .shadow-lg,
+.dark [class*="shadow-["] {
+  --tw-shadow-color: rgb(0 0 0 / 35%);
+}
+
+/* 滚动条暗色 */
+.dark ::-webkit-scrollbar {
+  width: 10px;
+  height: 10px;
+}
+.dark ::-webkit-scrollbar-track {
+  background: #0a0e1a;
+}
+.dark ::-webkit-scrollbar-thumb {
+  background: #2a3550;
+  border-radius: 5px;
+}
+.dark ::-webkit-scrollbar-thumb:hover {
+  background: #3f4e6b;
+}

@@ -1,0 +1,26 @@
+name: Release Policy
+
+on:
+  pull_request:
+    branches: [main]
+    types: [opened, synchronize, reopened, ready_for_review]
+
+jobs:
+  production-source-policy:
+    name: Production source branch policy
+    if: github.event.pull_request.draft == false
+    runs-on: ubuntu-latest
+    steps:
+      - name: Require develop or hotfix branch
+        shell: bash
+        run: |
+          case "$GITHUB_HEAD_REF" in
+            develop|hotfix/*)
+              echo "Allowed production source: $GITHUB_HEAD_REF"
+              ;;
+            *)
+              echo "Production PRs must come from develop or hotfix/*."
+              echo "Current source: $GITHUB_HEAD_REF"
+              exit 1
+              ;;
+          esac

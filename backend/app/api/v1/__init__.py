@@ -1,0 +1,84 @@
+from fastapi import APIRouter
+
+from app.api.v1 import (
+    alibaba1688_imports,
+    alibaba1688_browser,
+    auth,
+    automation,
+    business_partners,
+    closing,
+    consumables,
+    data_export,
+    dashboard,
+    exceptions,
+    finance,
+    foreign_trade,
+    integrations,
+    inventory_stocktakes,
+    jackyun_files,
+    logistics,
+    jky_orders,
+    jky_web,
+    opening,
+    procurement_board,
+    procurement_chain,
+    procurement_workbench,
+    production_purchase_view,
+    profit,
+    purchase,
+    purchase_consistency,
+    reconciliation,
+    sales_file,
+    sales_outbound,
+    search,
+    suppliers,
+    supply_chain,
+    supply_chain_material_flow,
+    system,
+    tax_accounting,
+    finance_vouchers,
+    tax_invoices,
+    warehouses,
+)
+
+# 采购与跨渠道一致性校验均已进入正式 service；API 初始化不再替换运行时函数。
+
+api_router = APIRouter(prefix="/api/v1")
+api_router.include_router(auth.router)
+api_router.include_router(system.router)
+api_router.include_router(integrations.router)
+api_router.include_router(inventory_stocktakes.router)
+api_router.include_router(jackyun_files.router)
+api_router.include_router(logistics.router)
+api_router.include_router(jky_orders.router)
+api_router.include_router(sales_file.router)
+api_router.include_router(alibaba1688_imports.router)
+api_router.include_router(alibaba1688_browser.router)
+api_router.include_router(jky_web.router)
+api_router.include_router(procurement_chain.router)
+api_router.include_router(procurement_workbench.router)
+api_router.include_router(procurement_board.router)
+api_router.include_router(exceptions.router)
+api_router.include_router(finance.router)
+api_router.include_router(business_partners.router)
+api_router.include_router(foreign_trade.router)
+api_router.include_router(purchase.router)
+api_router.include_router(purchase_consistency.router)
+api_router.include_router(reconciliation.router)
+api_router.include_router(sales_outbound.router)
+api_router.include_router(search.router)
+api_router.include_router(suppliers.router)
+api_router.include_router(profit.router)
+api_router.include_router(dashboard.router)
+api_router.include_router(supply_chain.router)
+api_router.include_router(production_purchase_view.router)
+api_router.include_router(supply_chain_material_flow.router)
+api_router.include_router(opening.router)
+api_router.include_router(closing.router)
+api_router.include_router(consumables.router)
+api_router.include_router(warehouses.router)
+api_router.include_router(data_export.router)
+api_router.include_router(automation.router)
+api_router.include_router(tax_invoices.router)
+api_router.include_router(tax_accounting.router)
+api_router.include_router(finance_vouchers.router)

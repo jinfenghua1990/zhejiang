@@ -1,0 +1,225 @@
+services:
+  postgres:
+    image: postgres:17.11-alpine
+    restart: unless-stopped
+    environment:
+      POSTGRES_DB: ${POSTGRES_DB:?set POSTGRES_DB}
+      POSTGRES_USER: ${POSTGRES_USER:?set POSTGRES_USER}
+      POSTGRES_PASSWORD: ${POSTGRES_PASSWORD:?set POSTGRES_PASSWORD}
+    volumes:
+      - ${POSTGRES_DATA_DIR_HOST:?set POSTGRES_DATA_DIR_HOST}:/var/lib/postgresql/data
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U $${POSTGRES_USER} -d $${POSTGRES_DB}"]
+      interval: 5s
+      timeout: 3s
+      retries: 20
+
+  redis:
+    image: redis:7.4-alpine
+    restart: unless-stopped
+    command: ["redis-server", "--appendonly", "yes"]
+    volumes:
+      - ${REDIS_DATA_DIR_HOST:?set REDIS_DATA_DIR_HOST}:/data
+    healthcheck:
+      test: ["CMD", "redis-cli", "ping"]
+      interval: 5s
+      timeout: 3s
+      retries: 20
+
+
+  db-roles:
+    image: postgres:17.11-alpine
+    profiles: ["ops"]
+    restart: "no"
+    environment:
+      PGHOST: postgres
+      PGPORT: "5432"
+      PGDATABASE: ${POSTGRES_DB:?set POSTGRES_DB}
+      PGUSER: ${POSTGRES_USER:?set POSTGRES_USER}
+      PGPASSWORD: ${POSTGRES_PASSWORD:?set POSTGRES_PASSWORD}
+      APP_DB_USER: ${APP_DB_USER:-}
+      APP_DB_PASSWORD: ${APP_DB_PASSWORD:-}
+      MIGRATOR_DB_USER: ${MIGRATOR_DB_USER:-}
+      MIGRATOR_DB_PASSWORD: ${MIGRATOR_DB_PASSWORD:-}
+    depends_on:
+      postgres:
+        condition: service_healthy
+    command:
+      - sh
+      - -ec
+      - |
+        test -n "$$APP_DB_USER" || { echo "APP_DB_USER 未配置"; exit 2; }
+        test -n "$$APP_DB_PASSWORD" || { echo "APP_DB_PASSWORD 未配置"; exit 2; }
+        test -n "$$MIGRATOR_DB_USER" || { echo "MIGRATOR_DB_USER 未配置"; exit 2; }
+        test -n "$$MIGRATOR_DB_PASSWORD" || { echo "MIGRATOR_DB_PASSWORD 未配置"; exit 2; }
+        psql -v ON_ERROR_STOP=1 \
+          -v app_user="$$APP_DB_USER" \
+          -v app_password="$$APP_DB_PASSWORD" \
+          -v migrator_user="$$MIGRATOR_DB_USER" \
+          -v migrator_password="$$MIGRATOR_DB_PASSWORD" <<'SQL'
+        SELECT format('CREATE ROLE %I LOGIN PASSWORD %L', :'app_user', :'app_password')
+        WHERE NOT EXISTS (SELECT 1 FROM pg_roles WHERE rolname = :'app_user') \gexec
+        SELECT format('ALTER ROLE %I LOGIN PASSWORD %L', :'app_user', :'app_password') \gexec
+
+        SELECT format('CREATE ROLE %I LOGIN PASSWORD %L', :'migrator_user', :'migrator_password')
+        WHERE NOT EXISTS (SELECT 1 FROM pg_roles WHERE rolname = :'migrator_user') \gexec
+        SELECT format('ALTER ROLE %I LOGIN PASSWORD %L', :'migrator_user', :'migrator_password') \gexec
+
+        -- migrator 成为业务数据库/schema/现有业务对象的 owner；不继承 PostgreSQL 管理员角色。
+        SELECT format('ALTER DATABASE %I OWNER TO %I', current_database(), :'migrator_user') \gexec
+        SELECT format('ALTER SCHEMA public OWNER TO %I', :'migrator_user') \gexec
+        SELECT format('ALTER TABLE %I.%I OWNER TO %I', n.nspname, c.relname, :'migrator_user')
+        FROM pg_class c
+        JOIN pg_namespace n ON n.oid = c.relnamespace
+        WHERE n.nspname = 'public' AND c.relkind IN ('r', 'p') \gexec
+        -- 表字段 owned/identity sequence 会随表 owner 一起迁移，禁止再单独 ALTER OWNER。
+        SELECT format('ALTER SEQUENCE %I.%I OWNER TO %I', n.nspname, c.relname, :'migrator_user')
+        FROM pg_class c
+        JOIN pg_namespace n ON n.oid = c.relnamespace
+        WHERE n.nspname = 'public'
+          AND c.relkind = 'S'
+          AND NOT EXISTS (
+            SELECT 1
+            FROM pg_depend d
+            WHERE d.classid = 'pg_class'::regclass
+              AND d.objid = c.oid
+              AND d.deptype IN ('a', 'i')
+          ) \gexec
+        SELECT format('ALTER VIEW %I.%I OWNER TO %I', n.nspname, c.relname, :'migrator_user')
+        FROM pg_class c
+        JOIN pg_namespace n ON n.oid = c.relnamespace
+        WHERE n.nspname = 'public' AND c.relkind = 'v' \gexec
+        SELECT format('ALTER MATERIALIZED VIEW %I.%I OWNER TO %I', n.nspname, c.relname, :'migrator_user')
+        FROM pg_class c
+        JOIN pg_namespace n ON n.oid = c.relnamespace
+        WHERE n.nspname = 'public' AND c.relkind = 'm' \gexec
+        SELECT format('ALTER TYPE %I.%I OWNER TO %I', n.nspname, t.typname, :'migrator_user')
+        FROM pg_type t
+        JOIN pg_namespace n ON n.oid = t.typnamespace
+        WHERE n.nspname = 'public' AND t.typtype IN ('e', 'd') \gexec
+
+        REVOKE CREATE ON SCHEMA public FROM PUBLIC;
+        SELECT format('GRANT CONNECT ON DATABASE %I TO %I', current_database(), :'app_user') \gexec
+        SELECT format('GRANT USAGE ON SCHEMA public TO %I', :'app_user') \gexec
+        SELECT format('GRANT SELECT, INSERT, UPDATE, DELETE ON ALL TABLES IN SCHEMA public TO %I', :'app_user') \gexec
+        SELECT format('GRANT USAGE, SELECT, UPDATE ON ALL SEQUENCES IN SCHEMA public TO %I', :'app_user') \gexec
+
+        SELECT format(
+          'ALTER DEFAULT PRIVILEGES FOR ROLE %I IN SCHEMA public GRANT SELECT, INSERT, UPDATE, DELETE ON TABLES TO %I',
+          :'migrator_user', :'app_user'
+        ) \gexec
+        SELECT format(
+          'ALTER DEFAULT PRIVILEGES FOR ROLE %I IN SCHEMA public GRANT USAGE, SELECT, UPDATE ON SEQUENCES TO %I',
+          :'migrator_user', :'app_user'
+        ) \gexec
+        SQL
+
+  migrate:
+    image: ${APP_IMAGE:?set APP_IMAGE}
+    profiles: ["ops"]
+    restart: "no"
+    env_file: .env
+    environment:
+      DATABASE_URL: ${DATABASE_URL:?set DATABASE_URL}
+      MIGRATION_DATABASE_URL: ${MIGRATION_DATABASE_URL:-}
+      REDIS_URL: redis://redis:6379/0
+      DATA_DIR: /data
+      APP_ENV: ${APP_ENV:?set APP_ENV}
+      RELEASE_CHANNEL: ${RELEASE_CHANNEL:?set RELEASE_CHANNEL}
+      DEPLOYMENT_MODE: container
+      APP_IMAGE_REF: ${APP_IMAGE:?set APP_IMAGE}
+    volumes:
+      - ${DATA_DIR_HOST:?set DATA_DIR_HOST}:/data
+    depends_on:
+      postgres:
+        condition: service_healthy
+    command: ["bash", "-lc", "if [ -n \"$$MIGRATION_DATABASE_URL\" ]; then export DATABASE_URL=\"$$MIGRATION_DATABASE_URL\"; fi; alembic upgrade head && python -m app.seed"]
+
+  api:
+    image: ${APP_IMAGE:?set APP_IMAGE}
+    restart: unless-stopped
+    env_file: .env
+    environment:
+      DATABASE_URL: ${DATABASE_URL:?set DATABASE_URL}
+      MIGRATION_DATABASE_URL: ""
+      POSTGRES_PASSWORD: ""
+      APP_DB_PASSWORD: ""
+      MIGRATOR_DB_PASSWORD: ""
+      REDIS_URL: redis://redis:6379/0
+      DATA_DIR: /data
+      FRONTEND_OUT: /app/frontend/out
+      APP_ENV: ${APP_ENV:?set APP_ENV}
+      RELEASE_CHANNEL: ${RELEASE_CHANNEL:?set RELEASE_CHANNEL}
+      DEPLOYMENT_MODE: container
+      APP_IMAGE_REF: ${APP_IMAGE:?set APP_IMAGE}
+      SYSTEM_UPDATE_ENABLED: "0"
+      HOME: /tmp
+    ports:
+      - "${WEB_PORT:?set WEB_PORT}:8000"
+    volumes:
+      - ${DATA_DIR_HOST:?set DATA_DIR_HOST}:/data
+    depends_on:
+      postgres:
+        condition: service_healthy
+      redis:
+        condition: service_healthy
+    command: ["uvicorn", "app.main:app", "--host", "0.0.0.0", "--port", "8000"]
+    healthcheck:
+      test: ["CMD", "curl", "-sf", "http://localhost:8000/healthz"]
+      interval: 10s
+      timeout: 5s
+      retries: 12
+
+  worker:
+    image: ${APP_IMAGE:?set APP_IMAGE}
+    restart: unless-stopped
+    env_file: .env
+    environment:
+      DATABASE_URL: ${DATABASE_URL:?set DATABASE_URL}
+      MIGRATION_DATABASE_URL: ""
+      POSTGRES_PASSWORD: ""
+      APP_DB_PASSWORD: ""
+      MIGRATOR_DB_PASSWORD: ""
+      REDIS_URL: redis://redis:6379/0
+      DATA_DIR: /data
+      APP_ENV: ${APP_ENV:?set APP_ENV}
+      RELEASE_CHANNEL: ${RELEASE_CHANNEL:?set RELEASE_CHANNEL}
+      DEPLOYMENT_MODE: container
+      APP_IMAGE_REF: ${APP_IMAGE:?set APP_IMAGE}
+      SYSTEM_UPDATE_ENABLED: "0"
+      HOME: /tmp
+    volumes:
+      - ${DATA_DIR_HOST:?set DATA_DIR_HOST}:/data
+    depends_on:
+      postgres:
+        condition: service_healthy
+      redis:
+        condition: service_healthy
+    command: ["celery", "-A", "app.celery_app", "worker", "-l", "info", "--concurrency", "2"]
+
+  beat:
+    image: ${APP_IMAGE:?set APP_IMAGE}
+    restart: unless-stopped
+    env_file: .env
+    environment:
+      DATABASE_URL: ${DATABASE_URL:?set DATABASE_URL}
+      MIGRATION_DATABASE_URL: ""
+      POSTGRES_PASSWORD: ""
+      APP_DB_PASSWORD: ""
+      MIGRATOR_DB_PASSWORD: ""
+      REDIS_URL: redis://redis:6379/0
+      DATA_DIR: /data
+      APP_ENV: ${APP_ENV:?set APP_ENV}
+      RELEASE_CHANNEL: ${RELEASE_CHANNEL:?set RELEASE_CHANNEL}
+      DEPLOYMENT_MODE: container
+      APP_IMAGE_REF: ${APP_IMAGE:?set APP_IMAGE}
+      SYSTEM_UPDATE_ENABLED: "0"
+      HOME: /tmp
+    volumes:
+      - ${DATA_DIR_HOST:?set DATA_DIR_HOST}:/data
+    depends_on:
+      postgres:
+        condition: service_healthy
+      redis:
+        condition: service_healthy
+    command: ["celery", "-A", "app.celery_app", "beat", "-l", "info", "--schedule", "/tmp/celerybeat-schedule"]

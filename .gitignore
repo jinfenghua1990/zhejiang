@@ -1,0 +1,63 @@
+# 秘密与数据
+.env
+.env.*
+!.env.example
+data/
+*.pem
+*.key
+keys/
+
+# Python
+__pycache__/
+*.py[cod]
+.venv/
+venv/
+.pytest_cache/
+
+# Node / Next
+node_modules/
+.next/
+out/
+next-env.d.ts
+.turbo/
+
+# 系统 / IDE
+.DS_Store
+*.tsbuildinfo
+.idea/
+.vscode/
+*.swp
+
+# 构建与测试产物
+dist/
+build/
+coverage/
+htmlcov/
+.coverage
+*.tmp
+
+# 日志
+*.log
+logs/
+
+# 本地手工源码备份（版本恢复统一使用 Git）
+*.bak
+*.bak-*
+*.bak.*
+
+# 运维产物
+backups/
+celerybeat-schedule
+backend/celerybeat-schedule
+
+# 本地数据库备份 / 导出
+*.dump
+*.sql.gz
+*.sqlite
+*.sqlite3
+
+# 业务数据快照（不进公开仓库）
+backend/backup_*.json
+
+# 部署运行时凭证
+deploy/**/runtime.env

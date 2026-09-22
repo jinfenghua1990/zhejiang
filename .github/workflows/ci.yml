@@ -1,0 +1,197 @@
+name: CI
+
+on:
+  # 直提模式：push 到 develop 或 main 都触发 CI；PR 保留为可选防护。
+  push:
+    branches: [develop, main]
+  pull_request:
+    branches: [develop, main]
+    types: [opened, synchronize, reopened, ready_for_review]
+  workflow_dispatch:
+
+concurrency:
+  group: ci-${{ github.event.pull_request.number || github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  backend:
+    name: Backend (migrate + lint + test)
+    if: github.event_name != 'pull_request' || github.event.pull_request.draft == false
+    runs-on: ubuntu-latest
+    services:
+      postgres:
+        image: postgres:17
+        env:
+          POSTGRES_DB: ecommerce
+          POSTGRES_USER: ecommerce
+          POSTGRES_PASSWORD: ecommerce
+        ports: ["5432:5432"]
+        options: >-
+          --health-cmd "pg_isready -U ecommerce -d ecommerce"
+          --health-interval 5s
+          --health-timeout 5s
+          --health-retries 10
+      redis:
+        image: redis:7
+        ports: ["6379:6379"]
+        options: >-
+          --health-cmd "redis-cli ping"
+          --health-interval 5s
+          --health-timeout 5s
+          --health-retries 10
+    env:
+      DATABASE_URL: postgresql+psycopg://ecommerce:ecommerce@127.0.0.1:5432/ecommerce
+      REDIS_URL: redis://127.0.0.1:6379/0
+      APP_SECRET_KEY: ci-only-test-secret-not-for-production-2026
+      JACKYUN_SYNC_MODE: manual
+    steps:
+      - uses: actions/checkout@v7
+      - name: Repository hygiene (blocking)
+        run: |
+          bash scripts/repo-hygiene.sh
+      - name: Secret scan (blocking)
+        run: |
+          bash scripts/secret-scan.sh
+      - uses: actions/setup-python@v7
+        with:
+          python-version: "3.12"
+          cache: pip
+          cache-dependency-path: backend/requirements.txt
+      - name: Install deps
+        run: |
+          pip install -r backend/requirements.txt pyflakes
+      - name: Migrate
+        run: |
+          cd backend && alembic upgrade head
+      - name: Migration drift check (blocking)
+        run: |
+          cd backend && alembic check
+      - name: Validate ops scripts and FK orphan audit
+        env:
+          POSTGRES_HOST: 127.0.0.1
+          POSTGRES_PORT: 5432
+          POSTGRES_DB: ecommerce
+          POSTGRES_USER: ecommerce
+          POSTGRES_PASSWORD: ecommerce
+        run: |
+          bash -n scripts/*.sh
+          bash scripts/orphan-audit.sh
+      - name: Backup and restore drill (PostgreSQL 17 tools)
+        run: |
+          set -euo pipefail
+          PG_CONTAINER="$(docker ps --filter 'ancestor=postgres:17' --format '{{.ID}}' | head -1)"
+          test -n "$PG_CONTAINER"
+          DUMP=/tmp/ecom-ci-backup.dump
+          CHECK_DB="ecommerce_restorecheck_${GITHUB_RUN_ID}_${GITHUB_RUN_ATTEMPT}"
+          cleanup() {
+            docker exec -e PGPASSWORD=ecommerce "$PG_CONTAINER" \
+              dropdb -h 127.0.0.1 -U ecommerce --if-exists "$CHECK_DB" >/dev/null 2>&1 || true
+            rm -f "$DUMP"
+          }
+          trap cleanup EXIT
+
+          docker exec -e PGPASSWORD=ecommerce "$PG_CONTAINER" \
+            pg_dump -h 127.0.0.1 -U ecommerce -Fc ecommerce > "$DUMP"
+          test -s "$DUMP"
+
+          docker exec -e PGPASSWORD=ecommerce "$PG_CONTAINER" \
+            createdb -h 127.0.0.1 -U ecommerce "$CHECK_DB"
+          cat "$DUMP" | docker exec -i -e PGPASSWORD=ecommerce "$PG_CONTAINER" \
+            pg_restore -h 127.0.0.1 -U ecommerce -d "$CHECK_DB" \
+              --no-owner --no-privileges --exit-on-error
+
+          TABLE_COUNT="$(docker exec -e PGPASSWORD=ecommerce "$PG_CONTAINER" \
+            psql -h 127.0.0.1 -U ecommerce -d "$CHECK_DB" -Atc \
+            "SELECT count(*) FROM information_schema.tables WHERE table_schema='public';")"
+          test "$TABLE_COUNT" -gt 0
+
+          export DATABASE_URL="postgresql+psycopg://ecommerce:ecommerce@127.0.0.1:5432/$CHECK_DB"
+          cd backend
+          alembic upgrade head
+          alembic current
+      - name: Lint new domain changes (blocking)
+        run: |
+          cd backend && python -m pyflakes \
+            app/api/v1/supply_chain.py \
+            app/api/v1/supply_chain_material_flow.py \
+            app/api/v1/tax_accounting.py \
+            app/api/v1/tax_invoices.py \
+            app/services/consumable_service.py \
+            app/services/production_service.py \
+            app/services/production_material_flow_service.py \
+            app/services/monthly_core.py \
+            app/services/closing.py \
+            app/services/tax_accounting_service.py \
+            app/services/tax_finance_summary_service.py \
+            app/services/finance_service.py \
+            app/models/production.py \
+            app/tasks/sync.py \
+            app/celery_app.py \
+            app/tests/test_supply_chain_production.py \
+            app/tests/test_supply_chain_material_flow.py \
+            app/tests/test_monthly_core.py \
+            app/tests/test_tax_accounting_truth.py \
+            app/tests/test_tax_finance_summary.py
+      - name: Runtime undefined-name scan (blocking)
+        run: |
+          cd backend
+          python -m pyflakes app 2>&1 | tee /tmp/pyflakes.txt || true
+          if grep -E "undefined name|referenced before assignment" /tmp/pyflakes.txt; then
+            echo "Runtime-level static error detected"
+            exit 1
+          fi
+      - name: Test new domain changes (blocking)
+        run: |
+          cd backend && python -m pytest \
+            app/tests/test_supply_chain_production.py \
+            app/tests/test_supply_chain_material_flow.py \
+            app/tests/test_monthly_core.py \
+            app/tests/test_tax_accounting_truth.py \
+            app/tests/test_tax_finance_summary.py \
+            -q --tb=short
+      - name: Full backend test suite (blocking)
+        run: |
+          cd backend && python -m pytest app/tests -q --tb=short
+      - name: Pyflakes debt budget (blocking)
+        run: |
+          # 2026-09-20 baseline 19 (lowered from 41) after unused-import/local cleanup; only allow this number to decrease.
+          bash scripts/pyflakes-budget.sh 19
+
+  frontend:
+    name: Frontend (typecheck + static build)
+    if: github.event_name != 'pull_request' || github.event.pull_request.draft == false
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v7
+      - uses: actions/setup-node@v7
+        with:
+          node-version: "24"
+          cache: npm
+          cache-dependency-path: frontend/package-lock.json
+      - name: Install deps
+        run: |
+          cd frontend && npm ci
+      - name: Typecheck (tsc)
+        run: |
+          cd frontend && npx tsc --noEmit
+      - name: Production static build
+        run: |
+          cd frontend && npm run build
+          test -f out/index.html
+
+  deployment:
+    name: Deployment image (single-port 8000)
+    if: github.event_name != 'pull_request' || github.event.pull_request.draft == false
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v7
+      - name: Validate compose topology
+        run: |
+          cp .env.example .env
+          docker compose config -q
+          cp deploy/zspace/staging.env.example deploy/zspace/.env
+          docker compose --env-file deploy/zspace/.env -f deploy/zspace/docker-compose.yml config -q
+          rm -f deploy/zspace/.env
+      - name: Build unified production image
+        run: |
+          docker build -f Dockerfile -t ecommerce-workspace:ci .

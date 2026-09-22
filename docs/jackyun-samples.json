@@ -1,0 +1,29 @@
+{
+  "getWarehouseListInfo": {
+    "isError": false,
+    "content": [
+      {
+        "text": "{\"code\":0,\"msg\":\"该应用未开通开放平台，无法调用接口，请联系客户经理处理\",\"result\":{\"data\":null,\"contextId\":2558976806644932353},\"subCode\":\"0130000609\"}",
+        "type": "text"
+      }
+    ]
+  },
+  "getGoodsListInfoByGoodsNo": {
+    "isError": false,
+    "content": [
+      {
+        "text": "{\"code\":0,\"msg\":\"该应用未开通开放平台，无法调用接口，请联系客户经理处理\",\"result\":{\"data\":null,\"contextId\":2558976810067459969},\"subCode\":\"0130000609\"}",
+        "type": "text"
+      }
+    ]
+  },
+  "getGoodsStockQuantityListInfo": {
+    "isError": false,
+    "content": [
+      {
+        "text": "{\"code\":0,\"msg\":\"该应用未开通开放平台，无法调用接口，请联系客户经理处理\",\"result\":{\"data\":null,\"contextId\":2558976813741691525},\"subCode\":\"0130000609\"}",
+        "type": "text"
+      }
+    ]
+  }
+}
