@@ -1267,13 +1267,8 @@ def set_vat_review(
     }
 
 
-def effective_invoice_amount_after_red(db: Session, invoice: TaxInvoice) -> Decimal:
-    """业务匹配/付款核对可继续使用的蓝字净额。
-
-    红字发票本身返回 0；蓝字部分红冲返回未冲余额；全额红冲、待补红字凭证、
-    作废/待确认、红冲超额异常均返回 0，避免继续进入采购/银行自动匹配。
-    """
-    context = red_accounting_context(db, [invoice]).get(invoice.id, {})
+def _effective_amount_from_red_context(context: dict) -> Decimal:
+    """从已算好的红冲上下文推导蓝字净额；批量列表用它避免逐票重算。"""
     if context.get("invoiceColor") != "blue":
         return Decimal("0")
     if context.get("redStatus") in {
@@ -1286,8 +1281,25 @@ def effective_invoice_amount_after_red(db: Session, invoice: TaxInvoice) -> Deci
         return Decimal("0")
 
 
+def effective_invoice_amount_after_red(
+    db: Session, invoice: TaxInvoice, *, red_context: dict[int, dict] | None = None
+) -> Decimal:
+    """业务匹配/付款核对可继续使用的蓝字净额。
+
+    红字发票本身返回 0；蓝字部分红冲返回未冲余额；全额红冲、待补红字凭证、
+    作废/待确认、红冲超额异常均返回 0，避免继续进入采购/银行自动匹配。
+    列表页请传入整批 ``red_accounting_context`` 结果，避免逐票重算（曾导致 200 行 24 秒）。
+    """
+    context = (
+        red_context.get(invoice.id, {})
+        if red_context is not None
+        else red_accounting_context(db, [invoice]).get(invoice.id, {})
+    )
+    return _effective_amount_from_red_context(context)
+
+
 def is_bank_payment_reconciliation_eligible(
-    invoice: TaxInvoice, db: Session | None = None
+    invoice: TaxInvoice, db: Session | None = None, *, red_context: dict[int, dict] | None = None
 ) -> bool:
     """银行付款核对只允许仍有有效蓝字净额的进项发票。"""
     total = Decimal(str(invoice.total_amount)) if invoice.total_amount is not None else Decimal("0")
@@ -1295,8 +1307,10 @@ def is_bank_payment_reconciliation_eligible(
         return False
     if _invoice_color(invoice) != "blue" or total <= 0:
         return False
-    if db is None:
+    if db is None and red_context is None:
         return True
+    if red_context is not None:
+        return _effective_amount_from_red_context(red_context.get(invoice.id, {})) > 0
     return effective_invoice_amount_after_red(db, invoice) > 0
 
 
@@ -1707,7 +1721,9 @@ def serialize_invoice(row: TaxInvoice, db: Session | None = None) -> dict:
     return _serialize_invoice(row, context, db=db)
 
 
-def _invoice_bank_payment_context(db: Session, rows: list[TaxInvoice]) -> dict[int, dict]:
+def _invoice_bank_payment_context(
+    db: Session, rows: list[TaxInvoice], *, red_context: dict[int, dict] | None = None
+) -> dict[int, dict]:
     """独立计算进项发票银行付款状态，并把红冲后的退款/冲抵结算回写到“未解决超额”。
 
     bankOverpaidAmount 是历史超额付款事实；bankOverpaidUnsettledAmount 才是当前仍需处理金额。
@@ -1743,11 +1759,11 @@ def _invoice_bank_payment_context(db: Session, rows: list[TaxInvoice]) -> dict[i
             link.invoice_id, Decimal("0")
         ) + amount
 
-    red_context = red_accounting_context(db, input_rows)
+    red_ctx = red_context if red_context is not None else red_accounting_context(db, input_rows)
     related_red_ids = sorted({
         int(red_id)
         for row in input_rows
-        for red_id in (red_context.get(row.id, {}).get("redRelatedInvoiceIds") or [])
+        for red_id in (red_ctx.get(row.id, {}).get("redRelatedInvoiceIds") or [])
     })
     related_red_rows = (
         db.query(TaxInvoice).filter(TaxInvoice.id.in_(related_red_ids)).all()
@@ -1758,12 +1774,14 @@ def _invoice_bank_payment_context(db: Session, rows: list[TaxInvoice]) -> dict[i
     result: dict[int, dict] = {}
     tolerance = Decimal("0.01")
     for row in input_rows:
-        total = effective_invoice_amount_after_red(db, row)
+        # 共享整批红冲上下文：此前的逐票 effective/eligible 调用是发票列表卡顿主因。
+        effective = _effective_amount_from_red_context(red_ctx.get(row.id, {}))
+        total = effective
         actual_paid = max(allocated_by_invoice.get(row.id, Decimal("0")), Decimal("0"))
         overpaid = max(actual_paid - total, Decimal("0"))
         remaining = max(total - actual_paid, Decimal("0"))
 
-        related_ids = red_context.get(row.id, {}).get("redRelatedInvoiceIds") or []
+        related_ids = red_ctx.get(row.id, {}).get("redRelatedInvoiceIds") or []
         red_settled = sum(
             (
                 Decimal(str(settlement_by_red.get(int(red_id), {}).get("redSettledAmount") or "0"))
@@ -1780,7 +1798,7 @@ def _invoice_bank_payment_context(db: Session, rows: list[TaxInvoice]) -> dict[i
                 if overpaid_unsettled <= tolerance
                 else "overpaid_after_red"
             )
-        elif not is_bank_payment_reconciliation_eligible(row, db=db):
+        elif not is_bank_payment_reconciliation_eligible(row, db=db, red_context=red_ctx):
             status = "not_applicable"
         elif actual_paid <= 0:
             status = "unmatched"
@@ -1801,11 +1819,14 @@ def _invoice_bank_payment_context(db: Session, rows: list[TaxInvoice]) -> dict[i
     return result
 
 
-def _invoice_business_context(db: Session, rows: list[TaxInvoice]) -> dict[int, dict]:
+def _invoice_business_context(
+    db: Session, rows: list[TaxInvoice], *, red_context: dict[int, dict] | None = None
+) -> dict[int, dict]:
     """只补充发票↔采购/销售业务关联；银行付款链接严禁混入业务 links。"""
     invoice_ids = [row.id for row in rows]
     if not invoice_ids:
         return {}
+    red_ctx = red_context if red_context is not None else red_accounting_context(db, rows)
     business_target_types = (
         "alibaba1688_order",
         "external_purchase_order",
@@ -1959,7 +1980,7 @@ def _invoice_business_context(db: Session, rows: list[TaxInvoice]) -> dict[int, 
                 "confirmed": bool(link.confirmed),
                 "note": link.note or "",
             })
-        invoice_total = quantize(effective_invoice_amount_after_red(db, invoice))
+        invoice_total = quantize(effective_invoice_amount_after_red(db, invoice, red_context=red_ctx))
         explicit_allocated = sum(
             (
                 quantize(to_decimal(link.allocated_amount))
@@ -2570,10 +2591,11 @@ def list_invoices(
     if verified is not None:
         query = query.filter(TaxInvoice.verified == verified)
     rows = query.limit(min(max(limit, 1), 500)).offset(max(offset, 0)).all()
-    context = _invoice_business_context(db, rows)
-    red_context = _red_trace_context(rows, db=db)
+    # 整批只算一次红冲上下文；此前逐票重算 500+ 次，是发票列表 24 秒卡顿的主因。
+    red_context = red_accounting_context(db, rows)
+    context = _invoice_business_context(db, rows, red_context=red_context)
     line_context = invoice_line_summaries(db, rows)
-    bank_payment_context = _invoice_bank_payment_context(db, rows)
+    bank_payment_context = _invoice_bank_payment_context(db, rows, red_context=red_context)
     settlement_context = _red_settlement_context(db, rows)
     vat_context = _vat_context(db, rows, red_context)
     result = []
@@ -2604,7 +2626,7 @@ def list_invoices(
 def summary(db: Session) -> dict:
     rows = filter_visible_invoices(db.query(TaxInvoice)).all()
     red_context = _red_trace_context(rows, db=db)
-    business_context = _invoice_business_context(db, rows)
+    business_context = _invoice_business_context(db, rows, red_context=red_context)
     active_import_ids = [
         row.id for row in db.query(TaxInvoiceImport.id).filter(TaxInvoiceImport.lifecycle == "active").all()
     ]

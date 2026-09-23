@@ -543,7 +543,15 @@ def overview(db: Session, year: int, month: int) -> dict[str, Any]:
     )
     # 红冲、作废、待确认和非正数金额发票仍保留在发票/会计模块，
     # 但不能进入“银行付款核对”池，更不能因金额 <= 0 被推导成 matched。
-    pool_rows = [row for row in pool_rows if tax_invoice_service.is_bank_payment_reconciliation_eligible(row, db=db)]
+    # 整批共享红冲上下文，避免逐票重算。
+    pool_red_context = tax_invoice_service.red_accounting_context(db, pool_rows)
+    pool_rows = [
+        row
+        for row in pool_rows
+        if tax_invoice_service.is_bank_payment_reconciliation_eligible(
+            row, db=db, red_context=pool_red_context
+        )
+    ]
     pool_ids = [row.id for row in pool_rows]
     pool_links: list[TaxInvoiceLink] = []
     if pool_ids:
@@ -573,11 +581,17 @@ def overview(db: Session, year: int, month: int) -> dict[str, Any]:
     for link in pool_links:
         linked_by_invoice.setdefault(link.invoice_id, []).append(link)
 
-    invoice_bank_context = tax_invoice_service._invoice_bank_payment_context(db, pool_rows)
+    invoice_bank_context = tax_invoice_service._invoice_bank_payment_context(
+        db, pool_rows, red_context=pool_red_context
+    )
     invoice_pool: list[dict[str, Any]] = []
     pool_by_id: dict[int, dict[str, Any]] = {}
     for invoice in pool_rows:
-        total = _invoice_target_amount(db, invoice)
+        total = _dec(
+            tax_invoice_service.effective_invoice_amount_after_red(
+                db, invoice, red_context=pool_red_context
+            )
+        )
         linked_amount = Decimal("0.0000")
         briefs: list[dict[str, Any]] = []
         for link in sorted(linked_by_invoice.get(invoice.id, []), key=lambda row: row.id):
@@ -803,7 +817,15 @@ def pending_invoices(db: Session, limit: int = 500) -> list[dict[str, Any]]:
         .order_by(TaxInvoice.issue_date.desc(), TaxInvoice.id.desc())
         .all()
     )
-    rows = [row for row in rows if tax_invoice_service.is_bank_payment_reconciliation_eligible(row, db=db)]
+    # 整批只算一次红冲上下文；此前逐票重算（每票一次 red_accounting_context），发票池接口 20 秒。
+    red_context = tax_invoice_service.red_accounting_context(db, rows)
+    rows = [
+        row
+        for row in rows
+        if tax_invoice_service.is_bank_payment_reconciliation_eligible(
+            row, db=db, red_context=red_context
+        )
+    ]
     invoice_ids = [row.id for row in rows]
     allocated_by_invoice: dict[int, Decimal] = {}
     if invoice_ids:
@@ -826,7 +848,11 @@ def pending_invoices(db: Session, limit: int = 500) -> list[dict[str, Any]]:
 
     result: list[dict[str, Any]] = []
     for invoice in rows:
-        total = _invoice_target_amount(db, invoice)
+        total = _dec(
+            tax_invoice_service.effective_invoice_amount_after_red(
+                db, invoice, red_context=red_context
+            )
+        )
         linked = allocated_by_invoice.get(invoice.id, Decimal("0"))
         remaining = total - linked
         if remaining <= TOLERANCE:
