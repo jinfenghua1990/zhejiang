@@ -582,10 +582,11 @@ export default function MonthlySendPage() {
       .catch(() => { if (seq === filesRequestSeq.current) setMsg("报告档案加载失败，请刷新重试"); });
   }, [companyName, sel]);
 
-  const loadBusiness = useCallback(() => {
+  const loadBusiness = useCallback((force = false) => {
     if (!sel || !companyName || !entityId) return;
     const seq = ++businessRequestSeq.current;
-    authenticatedFetch(`/api/v1/finance/${sel.year}/${sel.month}/refresh-business?company=${encodeURIComponent(companyName)}&legal_entity_id=${entityId}`, {
+    // 服务端对全量业务投影同步有 60 秒节流；只有手动“刷新”才 force 立即全量。
+    authenticatedFetch(`/api/v1/finance/${sel.year}/${sel.month}/refresh-business?company=${encodeURIComponent(companyName)}&legal_entity_id=${entityId}${force ? "&force=true" : ""}`, {
       method: "POST",
       cache: "no-store",
     })
@@ -1313,7 +1314,7 @@ export default function MonthlySendPage() {
         <section className={`${CARD} min-w-0 overflow-hidden`}>
           <div className="flex flex-wrap items-center justify-between gap-3 border-b border-slate-200 px-4 py-4">
             <div><h2 className="text-base font-semibold text-slate-900">本月处理清单 <span className="ml-1 text-slate-500">({readyCount}/{requiredDeliveryCount})</span></h2><p className="mt-1 text-xs text-slate-400">业务数据自动读取；这里按主体整理银行资料、系统生成资料并发送给财务</p></div>
-            <div className="flex items-center gap-2"><button type="button" onClick={() => { uploadKind.current = "交易明细"; fileRef.current?.click(); }} disabled={busy} className="inline-flex items-center gap-1 rounded-lg border border-blue-200 bg-white px-3 py-2 text-xs font-medium text-blue-600 hover:bg-blue-50 disabled:opacity-50">＋ 新增资料</button><button type="button" onClick={() => { loadFiles(); loadPeriods(); loadBusiness(); loadUnbilled(); loadCorporatePayment(); }} className="rounded-lg border border-slate-200 px-3 py-2 text-xs text-slate-600 hover:bg-slate-50">刷新</button></div>
+            <div className="flex items-center gap-2"><button type="button" onClick={() => { uploadKind.current = "交易明细"; fileRef.current?.click(); }} disabled={busy} className="inline-flex items-center gap-1 rounded-lg border border-blue-200 bg-white px-3 py-2 text-xs font-medium text-blue-600 hover:bg-blue-50 disabled:opacity-50">＋ 新增资料</button><button type="button" onClick={() => { loadFiles(); loadPeriods(); loadBusiness(true); loadUnbilled(); loadCorporatePayment(); }} className="rounded-lg border border-slate-200 px-3 py-2 text-xs text-slate-600 hover:bg-slate-50">刷新</button></div>
           </div>
           <div className="hidden items-center gap-3 bg-slate-50 px-4 py-2 text-[11px] font-medium text-slate-500 md:grid md:grid-cols-[28px_minmax(180px,1.2fr)_minmax(150px,1fr)_58px_112px_88px_minmax(150px,1fr)_auto]">
             <span /><span>资料名称</span><span>资料摘要</span><span>当前版本</span><span>更新时间</span><span>资料状态</span><span>参数摘要</span><span className="text-right">操作</span>

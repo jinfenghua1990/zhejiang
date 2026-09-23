@@ -1,3 +1,6 @@
+import os
+import threading
+import time
 from datetime import datetime
 from typing import Any
 
@@ -19,11 +22,19 @@ from app.services import finance_closing_service
 from app.services import finance_projection_service
 from app.services import finance_service
 from app.services import monthly_intake_service
+from app.services import partner_master_service
 from app.services import payment_invoice_match_service as payment_match_service
 from app.services import reconciliation as reconciliation_service
 from app.utils.uploads import UploadTooLargeError, read_upload_limited
 
 router = APIRouter(prefix="/finance", tags=["finance"])
+
+# 月结页每次挂载都会自动调 refresh-business；全量业务投影同步约 1~2 秒且幂等。
+# 默认 60 秒内同主体同账期只真正同步一次，页面上的"刷新"按钮会带 force=1 立即全量。
+# 可用环境变量调整，0 表示关闭节流。
+_BUSINESS_SYNC_TTL_SECONDS = float(os.getenv("FINANCE_BUSINESS_SYNC_TTL_SECONDS", "60"))
+_business_sync_lock = threading.Lock()
+_business_sync_at: dict[tuple[int, int, int], float] = {}
 
 
 class SalesReportFieldInput(BaseModel):
@@ -137,6 +148,7 @@ def refresh_monthly_business(
     month: int,
     company: str = "",
     legal_entity_id: int | None = None,
+    force: bool = False,
     db: Session = Depends(get_db),
 ) -> dict[str, Any]:
     """月结读取业务库：主体隔离 + FinanceEntry 同步，不再接收业务源文件。"""
@@ -149,13 +161,33 @@ def refresh_monthly_business(
         entity = matched
     company_name = entity.name
 
-    # 全量同步是幂等的：内销进入当前默认中国主体，外贸按各自订单/Shipment 的主体归属。
-    sync_result = finance_projection_service.sync_business_period(
-        db,
-        year=year,
-        month=month,
-        business_scope="all",
-    )
+    # 节流：同主体同账期 TTL 内跳过全量同步（sync 内部自带 commit，跳过无副作用）。
+    sync_key = (year, month, entity.id)
+    now = time.monotonic()
+    throttled = False
+    if not force and _BUSINESS_SYNC_TTL_SECONDS > 0:
+        with _business_sync_lock:
+            last = _business_sync_at.get(sync_key)
+            throttled = last is not None and now - last < _BUSINESS_SYNC_TTL_SECONDS
+    if throttled:
+        sync_result: dict[str, Any] = {
+            "skipped": True,
+            "reason": "ttl_throttled",
+            "ttlSeconds": _BUSINESS_SYNC_TTL_SECONDS,
+        }
+    else:
+        # 全量同步是幂等的：内销进入当前默认中国主体，外贸按各自订单/Shipment 的主体归属。
+        sync_result = dict(
+            finance_projection_service.sync_business_period(
+                db,
+                year=year,
+                month=month,
+                business_scope="all",
+            )
+        )
+        with _business_sync_lock:
+            _business_sync_at[sync_key] = time.monotonic()
+        sync_result["skipped"] = False
 
     # 现有内销销售主表尚未拆 legal_entity_id，因此只允许默认主体读取国内销售/月结口径；
     # 其他主体只读取自己的 FinanceEntry，避免把浙江公司的销售复制过去。
@@ -302,6 +334,20 @@ async def upload_file(
                 actor=current_actor(request),
             )
             result["bankImport"] = bank_result
+            try:
+                partner_result = partner_master_service.rebuild_partner_master(
+                    db, actor=current_actor(request), run_payment_match=True,
+                )
+                db.commit()
+                result["paymentInvoiceMatch"] = {
+                    "matched": partner_result["bankInvoiceMatchesCreated"],
+                    "ambiguous": partner_result["bankInvoiceAmbiguous"],
+                    "repaired": partner_result["bankInvoiceRepaired"],
+                }
+            except Exception as exc:
+                # 原件与银行流水已先行提交；匹配失败只作为后续核对提示，不伪装上传失败。
+                db.rollback()
+                result["paymentInvoiceMatchError"] = str(exc)
         except (ValueError, RuntimeError) as exc:
             # 原件归档已成功，解析失败不让上传整体失败，仅提示
             result["bankImportError"] = str(exc)

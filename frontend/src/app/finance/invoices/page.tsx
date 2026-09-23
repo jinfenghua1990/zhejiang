@@ -273,8 +273,23 @@ export default function InvoiceManagementPage() {
     setLoading(true);
     setError("");
     try {
+      const loadAllInvoices = async () => {
+        const pageSize = 500;
+        // 前两页并行（覆盖 ≤1000 张），省掉顺序瀑布；超出再顺序翻页。
+        const [first, second] = await Promise.all([
+          taxInvoiceApi.invoices({ limit: pageSize, offset: 0 }),
+          taxInvoiceApi.invoices({ limit: pageSize, offset: pageSize }),
+        ]);
+        const allRows: TaxInvoiceRow[] = [...first, ...second];
+        if (second.length < pageSize) return allRows;
+        for (let offset = pageSize * 2; ; offset += pageSize) {
+          const batch = await taxInvoiceApi.invoices({ limit: pageSize, offset });
+          allRows.push(...batch);
+          if (batch.length < pageSize) return allRows;
+        }
+      };
       const [invoiceRows, invoiceSummary, activeImports] = await Promise.all([
-        taxInvoiceApi.invoices({ limit: 500 }),
+        loadAllInvoices(),
         taxInvoiceApi.summary(),
         taxInvoiceApi.imports("active"),
       ]);
@@ -413,10 +428,16 @@ export default function InvoiceManagementPage() {
         try {
           const result = await taxInvoiceApi.upload(file, period || undefined, true);
           const imported = result.import;
+          const paymentMatch = result.automation?.partnerMaster;
+          const paymentSummary = paymentMatch
+            ? `；银行付款自动核对新增 ${paymentMatch.bankInvoiceMatchesCreated ?? 0} 条${paymentMatch.bankInvoiceAmbiguous ? `，${paymentMatch.bankInvoiceAmbiguous} 条候选有歧义待人工` : ""}`
+            : result.automation?.errors?.length
+              ? `；自动核对异常：${result.automation.errors[0]}`
+              : "";
           completed.push(
-            result.duplicate
+            `${result.duplicate
               ? `${imported.originalName}（重复，已跳过）`
-              : `${imported.originalName}（识别 ${imported.recognizedRowCount} 行，匹配 ${imported.matchedRowCount} 行${imported.needsReviewCount ? `，待核对 ${imported.needsReviewCount} 行` : ""}）`,
+              : `${imported.originalName}（识别 ${imported.recognizedRowCount} 行，匹配 ${imported.matchedRowCount} 行${imported.needsReviewCount ? `，待核对 ${imported.needsReviewCount} 行` : ""}）`}${paymentSummary}`,
           );
         } catch (caught) {
           failed.push(`${file.name}：${caught instanceof Error ? caught.message : String(caught)}`);
