@@ -1166,15 +1166,34 @@ def _source_rows(db: Session, source_type: str, ids: set[int]) -> dict[int, Any]
     return {row.id: row for row in db.query(model).filter(model.id.in_(ids)).all()}
 
 
-def _purchase_rows(db: Session, links: list[BusinessPartnerLink]) -> list[dict[str, Any]]:
+def _pick_preloaded(
+    preload: dict[str, dict[int, Any]] | None,
+    db: Session,
+    source_type: str,
+    ids: set[int],
+) -> dict[int, Any]:
+    """列表页批量预加载时复用同一张源表，详情页保持逐次查询。"""
+    cached = (preload or {}).get(source_type)
+    if cached is None:
+        return _source_rows(db, source_type, ids)
+    return {sid: cached[sid] for sid in ids if sid in cached}
+
+
+def _purchase_rows(
+    db: Session,
+    links: list[BusinessPartnerLink],
+    *,
+    preload: dict[str, dict[int, Any]] | None = None,
+    linked_jackyun_ids: set[int] | None = None,
+) -> list[dict[str, Any]]:
     external_ids = {row.source_id for row in links if row.source_type == "external_purchase_order"}
     alibaba_ids = {row.source_id for row in links if row.source_type == "alibaba1688_order"}
     jackyun_ids = {row.source_id for row in links if row.source_type == "jackyun_purchase_order"}
     consumable_ids = {row.source_id for row in links if row.source_type == "consumable_purchase"}
-    external = _source_rows(db, "external_purchase_order", external_ids)
-    alibaba = _source_rows(db, "alibaba1688_order", alibaba_ids)
-    jackyun = _source_rows(db, "jackyun_purchase_order", jackyun_ids)
-    consumable = _source_rows(db, "consumable_purchase", consumable_ids)
+    external = _pick_preloaded(preload, db, "external_purchase_order", external_ids)
+    alibaba = _pick_preloaded(preload, db, "alibaba1688_order", alibaba_ids)
+    jackyun = _pick_preloaded(preload, db, "jackyun_purchase_order", jackyun_ids)
+    consumable = _pick_preloaded(preload, db, "consumable_purchase", consumable_ids)
     rows: list[dict[str, Any]] = []
     external_1688_nos = {
         str(row.external_order_id or "").strip()
@@ -1209,13 +1228,14 @@ def _purchase_rows(db: Session, links: list[BusinessPartnerLink]) -> list[dict[s
             "paidAmount": _number(row.actual_payment),
             "status": row.order_status or "",
         })
-    linked_jackyun_ids = {
-        int(link.jackyun_po_id)
-        for link in db.query(JackyunPurchaseOrderLink).all()
-    }
+    linked_jackyun_ids_resolved = (
+        linked_jackyun_ids
+        if linked_jackyun_ids is not None
+        else {int(link.jackyun_po_id) for link in db.query(JackyunPurchaseOrderLink).all()}
+    )
     for row in jackyun.values():
         status = str(row.status or "").strip().lower()
-        if row.id in linked_jackyun_ids or any(token in status for token in ("cancel", "取消", "作废", "void")):
+        if row.id in linked_jackyun_ids_resolved or any(token in status for token in ("cancel", "取消", "作废", "void")):
             continue
         rows.append({
             "sourceType": "jackyun_purchase_order",
@@ -1244,11 +1264,16 @@ def _purchase_rows(db: Session, links: list[BusinessPartnerLink]) -> list[dict[s
     return sorted(rows, key=lambda row: row.get("date") or "", reverse=True)
 
 
-def _inbound_rows(db: Session, links: list[BusinessPartnerLink]) -> list[dict[str, Any]]:
+def _inbound_rows(
+    db: Session,
+    links: list[BusinessPartnerLink],
+    *,
+    preload: dict[str, dict[int, Any]] | None = None,
+) -> list[dict[str, Any]]:
     doc_ids = {row.source_id for row in links if row.source_type == "inbound_document"}
     web_ids = {row.source_id for row in links if row.source_type == "jky_web_stockin_order"}
-    docs = _source_rows(db, "inbound_document", doc_ids)
-    web = _source_rows(db, "jky_web_stockin_order", web_ids)
+    docs = _pick_preloaded(preload, db, "inbound_document", doc_ids)
+    web = _pick_preloaded(preload, db, "jky_web_stockin_order", web_ids)
     rows: list[dict[str, Any]] = []
     shown_nos = set()
     for row in docs.values():
@@ -1541,6 +1566,7 @@ def partner_detail(
         duplicate_map if duplicate_map is not None else _duplicate_map(db),
         duplicate_decisions if duplicate_decisions is not None else _duplicate_decisions(db),
     )
+    review_rows = _review_rows(db, partner.id)
     return {
         **_partner_core(db, partner),
         "summary": {
@@ -1558,14 +1584,14 @@ def partner_detail(
             "invoicePaymentDifference": _number(invoice_amount - bank_paid),
             "salesOrderCount": len(sales),
             "salesReceivedAmount": _number(sales_amount),
-            "needsReviewCount": len(_review_rows(db, partner.id)),
+            "needsReviewCount": len(review_rows),
         },
         "purchases": purchases,
         "inbounds": inbounds,
         "invoices": invoices,
         "payments": payments,
         "sales": sales,
-        "reviewItems": _review_rows(db, partner.id),
+        "reviewItems": review_rows,
         # 只提示不合并：疑似同一主体的其他档案，等人工决定
         "possibleDuplicates": duplicates,
     }
@@ -1588,35 +1614,112 @@ def list_partners(
     needle = normalize_name(keyword)
     duplicate_map = _duplicate_map(db)
     duplicate_decisions = _duplicate_decisions(db)
+
+    # 批量预加载：列表页只做汇总。此前逐档案调用 partner_detail，
+    # 290 个档案要跑 ~3500 条 SQL，接口耗时 8 秒以上。
+    identifiers_by_partner: dict[int, list[BusinessPartnerIdentifier]] = defaultdict(list)
+    for identifier_row in (
+        db.query(BusinessPartnerIdentifier)
+        .order_by(BusinessPartnerIdentifier.kind, BusinessPartnerIdentifier.id)
+        .all()
+    ):
+        identifiers_by_partner[identifier_row.partner_id].append(identifier_row)
+
+    links_by_partner: dict[int, list[BusinessPartnerLink]] = defaultdict(list)
+    source_ids_by_type: dict[str, set[int]] = defaultdict(set)
+    for link in db.query(BusinessPartnerLink).filter(BusinessPartnerLink.status == "linked").all():
+        links_by_partner[link.partner_id].append(link)
+        source_ids_by_type[link.source_type].add(link.source_id)
+    sources = {stype: _source_rows(db, stype, ids) for stype, ids in source_ids_by_type.items()}
+    linked_jackyun_ids = (
+        {int(link.jackyun_po_id) for link in db.query(JackyunPurchaseOrderLink).all()}
+        if "jackyun_purchase_order" in sources
+        else set()
+    )
+
+    # 待确认计数与 _review_rows 同口径：按 candidate_partner_ids 归属。
+    review_counts: dict[int, int] = defaultdict(int)
+    for review_link in db.query(BusinessPartnerLink).filter(BusinessPartnerLink.status == "needs_review").all():
+        for partner_id in {int(value) for value in (review_link.candidate_partner_ids or [])}:
+            review_counts[partner_id] += 1
+
     items = []
     for row in rows:
         if role in PARTNER_ROLES and role not in set(row.roles or []):
             continue
-        detail = partner_detail(
-            db,
-            row.id,
-            duplicate_map=duplicate_map,
-            duplicate_decisions=duplicate_decisions,
+        identifiers = identifiers_by_partner.get(row.id, [])
+        if needle:
+            searchable = " ".join(
+                [
+                    row.name or "",
+                    row.tax_no or "",
+                    row.bank_account_no or "",
+                    *[str(item.value) for item in identifiers],
+                ]
+            )
+            if needle not in normalize_name(searchable) and needle not in normalize_tax_no(searchable):
+                continue
+        links = links_by_partner.get(row.id, [])
+        purchases = _purchase_rows(db, links, preload=sources, linked_jackyun_ids=linked_jackyun_ids)
+        inbounds = _inbound_rows(db, links, preload=sources)
+        invoice_rows = _pick_preloaded(
+            sources, db, "tax_invoice",
+            {link.source_id for link in links if link.source_type == "tax_invoice"},
         )
-        if detail is None:
-            continue
-        searchable = " ".join(
-            [
-                row.name or "",
-                row.tax_no or "",
-                row.bank_account_no or "",
-                *[str(item["value"]) for item in detail["identifiers"]],
-            ]
+        bank_rows = _pick_preloaded(
+            sources, db, "bank_transaction",
+            {link.source_id for link in links if link.source_type == "bank_transaction"},
         )
-        if needle and needle not in normalize_name(searchable) and needle not in normalize_tax_no(searchable):
-            continue
+        sales_rows = _pick_preloaded(
+            sources, db, "jky_web_sales_order",
+            {link.source_id for link in links if link.source_type == "jky_web_sales_order"},
+        )
+        purchase_amount = sum(
+            (
+                _decimal(purchase["paidAmount"])
+                if purchase.get("paidAmount") is not None
+                else _decimal(purchase.get("amount"))
+                for purchase in purchases
+            ),
+            Decimal("0"),
+        )
+        invoice_amount = sum((_decimal(inv.total_amount) for inv in invoice_rows.values()), Decimal("0"))
+        bank_paid = sum(
+            (_decimal(txn.amount) for txn in bank_rows.values() if (txn.direction or "") == "out"),
+            Decimal("0"),
+        )
+        bank_received = sum(
+            (_decimal(txn.amount) for txn in bank_rows.values() if (txn.direction or "") == "in"),
+            Decimal("0"),
+        )
+        sales_amount = sum((_decimal(order.real_fee) for order in sales_rows.values()), Decimal("0"))
         items.append({
-            **{
-                key: detail[key]
-                for key in ("id", "name", "taxNo", "roles", "status", "identifiers", "formerNames", "legacySupplierId")
+            "id": row.id,
+            "name": row.name,
+            "taxNo": row.tax_no or "",
+            "roles": _roles(row.roles),
+            "status": row.status,
+            "identifiers": [_identifier_dict(item) for item in identifiers],
+            "formerNames": [item.value for item in identifiers if item.kind == "former_name"],
+            "legacySupplierId": row.legacy_supplier_id,
+            "summary": {
+                "purchaseOrderCount": len(purchases),
+                "purchaseAmount": _number(purchase_amount),
+                "inboundCount": len(inbounds),
+                "inboundAmount": _number(sum((_decimal(inbound["amount"]) for inbound in inbounds), Decimal("0"))),
+                "invoiceCount": len(invoice_rows),
+                "invoiceAmount": _number(invoice_amount),
+                "bankTransactionCount": len(bank_rows),
+                "bankPaidAmount": _number(bank_paid),
+                "bankReceivedAmount": _number(bank_received),
+                # 这是事实金额之间的核对差额，不替代会计应付/应收科目余额。
+                "purchasePaymentDifference": _number(purchase_amount - bank_paid),
+                "invoicePaymentDifference": _number(invoice_amount - bank_paid),
+                "salesOrderCount": len(sales_rows),
+                "salesReceivedAmount": _number(sales_amount),
+                "needsReviewCount": review_counts.get(row.id, 0),
             },
-            "summary": detail["summary"],
-            "possibleDuplicateCount": len(detail["possibleDuplicates"]),
+            "possibleDuplicateCount": len(_possible_duplicates(row, duplicate_map, duplicate_decisions)),
         })
     items.sort(
         key=lambda row: (

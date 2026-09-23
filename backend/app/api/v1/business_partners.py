@@ -1,5 +1,8 @@
 """财务中心的统一往来单位档案 API。"""
 
+import os
+import threading
+import time
 from typing import Any
 
 from fastapi import APIRouter, Depends, HTTPException, Query, Request
@@ -17,6 +20,12 @@ from app.services.partner_reference_service import partner_reference_coverage
 
 
 router = APIRouter(prefix="/finance/partners", tags=["finance-partners"])
+
+# 回填同步完全幂等但并不轻量（全量扫 12 张表）。它只兜底“新事实尽快进档案”，
+# 不需要每次打开页面都跑：默认 60 秒内只执行一次，可用环境变量调整，0 关闭节流。
+_PARTNER_SYNC_THROTTLE_SECONDS = float(os.getenv("PARTNER_SYNC_THROTTLE_SECONDS", "60"))
+_sync_lock = threading.Lock()
+_last_sync_at = -float("inf")
 
 
 class PartnerBankAccountInput(BaseModel):
@@ -62,9 +71,18 @@ class DuplicateDecisionInput(BaseModel):
 
 
 def _sync_and_commit(db: Session) -> dict[str, int]:
-    result = partner_service.sync_business_partners(db)
-    db.commit()
-    return result
+    global _last_sync_at
+    now = time.monotonic()
+    if now - _last_sync_at < _PARTNER_SYNC_THROTTLE_SECONDS:
+        return {}
+    with _sync_lock:
+        now = time.monotonic()
+        if now - _last_sync_at < _PARTNER_SYNC_THROTTLE_SECONDS:
+            return {}
+        result = partner_service.sync_business_partners(db)
+        db.commit()
+        _last_sync_at = time.monotonic()
+        return result
 
 
 @router.get("")
